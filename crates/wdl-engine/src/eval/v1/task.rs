@@ -98,9 +98,11 @@ use crate::diagnostics::task_execution_failed;
 use crate::diagnostics::task_localization_failed;
 use crate::diagnostics::unknown_enum;
 use crate::eval::EvaluatedTask;
+use crate::eval::RetryCause;
 use crate::eval::Scope;
 use crate::eval::ScopeIndex;
 use crate::eval::ScopeRef;
+use crate::eval::TaskConstraintsSnapshot;
 use crate::eval::trie::InputTrie;
 use crate::http::Transferer;
 use crate::path::is_file_url;
@@ -1602,7 +1604,7 @@ impl Evaluator {
         // so that even localization performed while evaluating inputs and
         // declarations is attributable to the task.
         let mut state = State::new(self, document, task, &temp_dir, self.generate_task_name(id))?;
-        self.notify_task_initializing(id, &state.task_name);
+        self.notify_task_initializing(id, &state.task_name, 0);
         let nodes = toposort(&graph, None).expect("graph should be acyclic");
         let mut current = 0;
         while current < nodes.len() {
@@ -1644,10 +1646,10 @@ impl Evaluator {
                 return Err(EvaluationError::Canceled);
             }
 
-            // Each attempt is a distinct execution with its own name.
+            // Each attempt is a distinct execution with its own name; the name
+            // for a retry attempt was minted when the retry was announced.
             if attempt > 0 {
-                state.task_name = self.generate_task_name(id);
-                self.notify_task_initializing(id, &state.task_name);
+                self.notify_task_initializing(id, &state.task_name, attempt);
             }
 
             let EvaluatedSections {
@@ -1820,6 +1822,13 @@ impl Evaluator {
                     attempt_dir.push("attempts");
                     attempt_dir.push(attempt.to_string());
 
+                    // Notify that the attempt is being submitted for
+                    // execution, along with its resolved constraints.
+                    self.notify_task_executing(
+                        &state.task_name,
+                        TaskConstraintsSnapshot::from(&constraints),
+                    );
+
                     match self
                         .backend
                         .execute(
@@ -1889,6 +1898,21 @@ impl Evaluator {
                     let task = task.as_task_post_evaluation().unwrap();
                     previous_task_data = Some(task.data().clone());
                 }
+
+                // Mint the next attempt's name now so that the retry
+                // announcement can link the failed attempt to its successor;
+                // the `TaskInitializing` event at the top of the loop
+                // announces the new attempt under this name.
+                let next_name = self.generate_task_name(id);
+                self.notify_task_retrying(
+                    &state.task_name,
+                    &next_name,
+                    attempt,
+                    RetryCause::UnacceptableExitCode {
+                        code: result.exit_code,
+                    },
+                );
+                state.task_name = next_name;
 
                 info!(
                     "retrying execution of task `{name}` (retry {attempt})",

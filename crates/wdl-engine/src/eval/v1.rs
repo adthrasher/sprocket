@@ -34,6 +34,8 @@ use crate::cache::CallCache;
 use crate::cache::CallCacheExclusions;
 use crate::config::CallCachingMode;
 use crate::config::Config;
+use crate::eval::RetryCause;
+use crate::eval::TaskConstraintsSnapshot;
 use crate::http::HttpTransferer;
 use crate::http::Transferer;
 
@@ -168,11 +170,12 @@ impl Evaluator {
     }
 
     /// Notifies that a task has started evaluating an execution attempt.
-    fn notify_task_initializing(&self, id: &str, name: &str) {
+    fn notify_task_initializing(&self, id: &str, name: &str, attempt: u64) {
         if let Some(sender) = &self.events {
             let _ = sender.send(EngineEvent::TaskInitializing {
                 id: id.to_string(),
                 name: name.to_string(),
+                attempt,
             });
         }
     }
@@ -182,6 +185,35 @@ impl Evaluator {
         if let Some(sender) = &self.events {
             let _ = sender.send(EngineEvent::TaskLocalizing {
                 name: name.to_string(),
+            });
+        }
+    }
+
+    /// Notifies that a task execution attempt is being submitted to the
+    /// backend.
+    fn notify_task_executing(&self, name: &str, constraints: TaskConstraintsSnapshot) {
+        if let Some(sender) = &self.events {
+            let _ = sender.send(EngineEvent::TaskExecuting {
+                name: name.to_string(),
+                constraints,
+            });
+        }
+    }
+
+    /// Notifies that a task execution attempt failed and is being retried.
+    fn notify_task_retrying(
+        &self,
+        prior_name: &str,
+        next_name: &str,
+        attempt: u64,
+        cause: RetryCause,
+    ) {
+        if let Some(sender) = &self.events {
+            let _ = sender.send(EngineEvent::TaskRetrying {
+                prior_name: prior_name.to_string(),
+                next_name: next_name.to_string(),
+                attempt,
+                cause,
             });
         }
     }

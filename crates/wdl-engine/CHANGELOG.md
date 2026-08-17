@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Added
 
 * Added support for the `ImagePull{Started, Failed, Finished}` `crankshaft` events ([#1117](https://github.com/stjude-rust-labs/sprocket/pull/1117)).
+* `EngineEvent` now reports execution metrics data: `TaskInitializing` carries
+  the 0-based `attempt` number, a new `TaskExecuting` event carries a
+  serializable `TaskConstraintsSnapshot` of the attempt's resolved resource
+  constraints (container, cpu, memory, gpu, fpga, disks) when the attempt is
+  submitted to a backend, and a new `TaskRetrying` event announces a retry
+  with its `RetryCause` (`unacceptable_exit_code` with the failing code, or
+  `preempted`), linking the failed attempt's name to its successor's. The TES
+  backend now announces its internal preemption resubmissions through
+  `TaskRetrying` and executes each resubmission under a derived
+  `{name}~{n}` task name (see the new `RESUBMIT_NAME_SEPARATOR` constant and
+  `resubmit_task_name` helper); consumers that group executions by attempt
+  name should treat the `~{n}` suffix as a resubmission of the same attempt.
 
 #### Changed
 

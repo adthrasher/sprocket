@@ -45,6 +45,7 @@ use crate::INITIAL_EXPECTED_NAMES;
 use crate::ONE_GIBIBYTE;
 use crate::Object;
 use crate::PrimitiveValue;
+use crate::RetryCause;
 use crate::TaskInputs;
 use crate::backend::STDERR_FILE_NAME;
 use crate::backend::STDOUT_FILE_NAME;
@@ -55,6 +56,7 @@ use crate::config::TesBackendAuthConfig;
 use crate::digest::UrlDigestExt;
 use crate::digest::calculate_local_digest;
 use crate::http::Transferer;
+use crate::resubmit_task_name;
 use crate::v1::DEFAULT_DISK_MOUNT_POINT;
 use crate::v1::DEFAULT_TASK_REQUIREMENT_DISKS;
 use crate::v1::hints;
@@ -413,6 +415,8 @@ impl TaskExecutionBackend for TesBackend {
             }
 
             let mut preemptible = preemptible;
+            let mut name = name;
+            let mut resubmission: u64 = 0;
             loop {
                 let task = Task::builder()
                     .name(&name)
@@ -457,8 +461,22 @@ impl TaskExecutionBackend for TesBackend {
                 let results = match self.inner.run(task, self.cancellation.second())?.await {
                     Ok(results) => results,
                     Err(TaskRunError::Preempted) if preemptible > 0 => {
-                        // Decrement the preemptible count and retry
+                        // Decrement the preemptible count and resubmit under a
+                        // derived name so that consumers can attribute each
+                        // resubmission distinctly; see
+                        // `RESUBMIT_NAME_SEPARATOR`.
                         preemptible -= 1;
+                        resubmission += 1;
+                        let next_name = resubmit_task_name(&name, resubmission);
+                        if let Some(sender) = &self.events {
+                            let _ = sender.send(EngineEvent::TaskRetrying {
+                                prior_name: name.clone(),
+                                next_name: next_name.clone(),
+                                attempt: resubmission,
+                                cause: RetryCause::Preempted,
+                            });
+                        }
+                        name = next_name;
                         continue;
                     }
                     Err(TaskRunError::Canceled) => return Ok(None),
