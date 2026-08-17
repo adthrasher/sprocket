@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use anyhow::Context as _;
 use anyhow::Result;
 use chrono::Utc;
 use crankshaft::events::Event as CrankshaftEvent;
@@ -19,6 +20,7 @@ use wdl::engine::EngineEvent;
 
 use crate::system::v1::db::Database;
 use crate::system::v1::db::LogSource;
+use crate::system::v1::db::NewTask;
 use crate::system::v1::db::TaskStatus;
 
 /// An event received by the monitor, or the loss of the channel carrying it.
@@ -198,29 +200,69 @@ impl TaskMonitorSvc {
     /// Handles a received engine event.
     async fn handle_engine_event(&mut self, event: EngineEvent) -> Result<()> {
         match event {
-            EngineEvent::TaskInitializing {
-                id: _,
-                name,
-                attempt: _,
-            } => {
+            EngineEvent::TaskInitializing { id, name, attempt } => {
                 self.db
-                    .create_task(&name, self.run_id, TaskStatus::Initializing)
+                    .create_task(NewTask {
+                        name: &name,
+                        run_id: self.run_id,
+                        status: TaskStatus::Initializing,
+                        call_id: Some(&id),
+                        attempt: attempt.try_into().unwrap_or(i64::MAX),
+                    })
                     .await?;
                 self.unfinished.insert(name);
             }
             EngineEvent::TaskLocalizing { name } => {
                 let _ = self.db.update_task_localizing(&name).await?;
             }
-            EngineEvent::TaskExecuting { .. } | EngineEvent::TaskRetrying { .. } => {
-                // Execution constraints and retry causes are not yet recorded
-                // in the database; these events will be consumed when task
-                // metrics are persisted.
+            EngineEvent::TaskExecuting { name, constraints } => {
+                let constraints = serde_json::to_string(&constraints)
+                    .context("failed to serialize task constraints")?;
+                let _ = self.db.update_task_constraints(&name, &constraints).await?;
             }
-            EngineEvent::ReusedCachedExecutionResult { id: _, name } => {
+            EngineEvent::TaskRetrying {
+                prior_name,
+                next_name,
+                attempt: _,
+                cause,
+            } => {
+                // Record the cause on the attempt that failed; that row has
+                // usually already reached a terminal status.
+                let cause =
+                    serde_json::to_string(&cause).context("failed to serialize retry cause")?;
+                let _ = self.db.update_task_retry_cause(&prior_name, &cause).await?;
+
+                // Create the successor's row, inheriting the call id and
+                // attempt number from the failed attempt. An evaluator retry
+                // is followed by a `TaskInitializing` event that raises the
+                // attempt number; a backend-local resubmission is not, and
+                // remains part of the same attempt.
+                let (call_id, attempt) = match self.db.get_task(&prior_name).await {
+                    Ok(prior) => (prior.call_id, prior.attempt),
+                    Err(_) => (None, 0),
+                };
+                self.db
+                    .create_task(NewTask {
+                        name: &next_name,
+                        run_id: self.run_id,
+                        status: TaskStatus::Initializing,
+                        call_id: call_id.as_deref(),
+                        attempt,
+                    })
+                    .await?;
+                self.unfinished.insert(next_name);
+            }
+            EngineEvent::ReusedCachedExecutionResult { id, name } => {
                 // The task may never have been announced as initializing if that
                 // event is still in flight on the other channel.
                 self.db
-                    .create_task(&name, self.run_id, TaskStatus::Initializing)
+                    .create_task(NewTask {
+                        name: &name,
+                        run_id: self.run_id,
+                        status: TaskStatus::Initializing,
+                        call_id: Some(&id),
+                        attempt: 0,
+                    })
                     .await?;
                 let _ = self.db.update_task_cached(&name, Utc::now()).await?;
                 self.unfinished.remove(&name);
@@ -257,7 +299,11 @@ impl TaskMonitorSvc {
 
                 self.task_names.insert(id, name.clone());
                 self.db
-                    .create_task(&name, self.run_id, TaskStatus::Pending)
+                    .create_task(NewTask::from_backend_event(
+                        &name,
+                        self.run_id,
+                        TaskStatus::Pending,
+                    ))
                     .await?;
                 let _ = self.db.update_task_pending(&name).await?;
                 self.unfinished.insert(name);
