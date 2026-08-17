@@ -51,11 +51,12 @@ use crate::commands::CommandResult;
 // from generated rustdoc.
 #[doc(hidden)]
 pub mod analysis;
-#[doc(hidden)]
+
 pub mod commands;
 mod config;
 mod eval;
 mod inputs;
+mod metrics;
 pub mod server;
 pub mod system;
 

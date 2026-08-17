@@ -15,6 +15,7 @@ use crate::Config;
 use crate::commands::CommandResult;
 use crate::commands::cancel;
 use crate::commands::inspect;
+use crate::commands::metrics;
 use crate::commands::retry;
 use crate::commands::status;
 use crate::commands::submit;
@@ -39,6 +40,8 @@ pub enum ServerSubcommand {
     Status(status::Args),
     /// Show detailed information about a run.
     Inspect(inspect::Args),
+    /// Show execution metrics for a run.
+    Metrics(metrics::Args),
     /// Cancel a running or queued run.
     Cancel(cancel::Args),
     /// Retry a previous run, optionally with input overrides.
@@ -140,6 +143,7 @@ pub async fn server(args: Args, config: Config, colorize: bool) -> CommandResult
         ServerSubcommand::Submit(args) => submit::submit(args, config, colorize).await,
         ServerSubcommand::Status(args) => status::status(args, config, colorize).await,
         ServerSubcommand::Inspect(args) => inspect::inspect(args, config, colorize).await,
+        ServerSubcommand::Metrics(args) => metrics::metrics(args, config, colorize).await,
         ServerSubcommand::Cancel(args) => cancel::cancel(args, config).await,
         ServerSubcommand::Retry(args) => retry::retry(args, config, colorize).await,
     }

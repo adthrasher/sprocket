@@ -55,6 +55,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its `module.json`, pointing to `sprocket dev module lock`
   ([#999](https://github.com/stjude-rust-labs/sprocket/pull/999)).
 
+* `sprocket dev server metrics <RUN>` reports a run's execution metrics:
+  per call, every execution attempt with its wall and queue times, resolved
+  execution constraints (cpu, memory, gpus), exit status, and retry cause,
+  plus run-level totals; `--json` emits the raw response and `--call` filters
+  to matching calls. `sprocket run` now also writes a `metrics.json` file with
+  the same structure to the run directory alongside `outputs.json`.
 * `dev server` now records and reports execution metrics. Each task row
   carries its call id, 0-based attempt number, resolved execution constraints
   (container, cpu, memory, gpu, fpga, disks), and — when an attempt is
