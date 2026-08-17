@@ -55,6 +55,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its `module.json`, pointing to `sprocket dev module lock`
   ([#999](https://github.com/stjude-rust-labs/sprocket/pull/999)).
 
+* `dev server` now records and reports execution metrics. Each task row
+  carries its call id, 0-based attempt number, resolved execution constraints
+  (container, cpu, memory, gpu, fpga, disks), and — when an attempt is
+  retried — the retry cause (an unacceptable exit code, or preemption). A new
+  `GET /api/v1/runs/{id}/metrics` endpoint reports the run's wall time and,
+  per call, every execution attempt with its wall and queue times, exit
+  status, constraints, retry cause, and a reference to its logs. The
+  `/api/v1/runs/{id}/tasks` and `/api/v1/tasks` responses gained the
+  `call_id`, `attempt`, `constraints`, and `retry_cause` fields.
 * `dev server` now reports finer-grained progress. A run is `analyzing` while
   its document is resolved and type checked, and a task reports `initializing`,
   `localizing` while its inputs are transferred, or `cached` when the call
