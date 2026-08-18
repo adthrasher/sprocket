@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Added
 
 * Added support for the `ImagePull{Started, Failed, Finished}` `crankshaft` events ([#1117](https://github.com/stjude-rust-labs/sprocket/pull/1117)).
+* `EngineEvent` gained a `TaskUtilization` event carrying a serializable
+  `TaskUtilizationSnapshot` of an execution attempt's observed resource
+  utilization (maximum/average resident memory in bytes; total, user, and
+  system CPU time in milliseconds). It is emitted at the attempt's
+  termination — successful, failed, or canceled alike — by backends whose
+  execution environment reports utilization: currently the LSF backend
+  (sourced from `bjobs`) and the Slurm backend (sourced from `sacct`, whose
+  query now additionally requests the `MaxRSS` and `AveRSS` fields so
+  memory reports resident set sizes for parity with LSF). Backends that
+  cannot observe utilization never emit the event.
 * `EngineEvent` now reports execution metrics data: `TaskInitializing` carries
   the 0-based `attempt` number, a new `TaskExecuting` event carries a
   serializable `TaskConstraintsSnapshot` of the attempt's resolved resource

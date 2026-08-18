@@ -791,6 +791,10 @@ async fn progress(
                             // announced separately and re-enters preparation.
                             state.depart(&Arc::new(prior_name));
                         }
+                        EngineEvent::TaskUtilization { .. } => {
+                            // Utilization is recorded by the metrics
+                            // collector, not displayed in the progress bar.
+                        }
                         EngineEvent::ReusedCachedExecutionResult { name, .. } => {
                             state.depart(&Arc::new(name));
                             state.cached += 1;

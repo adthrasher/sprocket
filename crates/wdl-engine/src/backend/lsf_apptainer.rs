@@ -52,12 +52,14 @@ use tracing::warn;
 
 use super::TaskExecutionBackend;
 use crate::CancellationContext;
+use crate::EngineEvent;
 use crate::EvaluationPath;
 use crate::Events;
 use crate::ONE_GIBIBYTE;
 use crate::Object;
 use crate::PrimitiveValue;
 use crate::TaskInputs;
+use crate::TaskUtilizationSnapshot;
 use crate::backend::ApptainerRuntime;
 use crate::backend::ExecuteTaskRequest;
 use crate::backend::TaskExecutionConstraints;
@@ -214,11 +216,66 @@ struct JobRecord {
     system_cpu_time: String,
 }
 
+impl JobRecord {
+    /// Builds a utilization snapshot from the record's measurement fields.
+    ///
+    /// Fields that are empty or unparseable contribute nothing to the
+    /// snapshot.
+    fn utilization(&self) -> TaskUtilizationSnapshot {
+        TaskUtilizationSnapshot {
+            max_memory: parse_lsf_memory(&self.max_memory),
+            avg_memory: parse_lsf_memory(&self.avg_memory),
+            cpu_time_ms: parse_lsf_seconds(&self.cpu_used),
+            user_cpu_time_ms: parse_lsf_seconds(&self.user_cpu_time),
+            system_cpu_time_ms: parse_lsf_seconds(&self.system_cpu_time),
+            ..Default::default()
+        }
+    }
+}
+
+/// Parses an LSF memory measurement (e.g. `12.5 Gbytes`) into bytes.
+///
+/// Returns `None` for empty or unrecognized values, since utilization is
+/// advisory.
+fn parse_lsf_memory(value: &str) -> Option<u64> {
+    let mut parts = value.split_whitespace();
+    let amount: f64 = parts.next()?.parse().ok()?;
+    let multiplier = match parts.next()? {
+        u if u.eq_ignore_ascii_case("bytes") => 1.0,
+        u if u.eq_ignore_ascii_case("kbytes") => 1024.0,
+        u if u.eq_ignore_ascii_case("mbytes") => 1024.0 * 1024.0,
+        u if u.eq_ignore_ascii_case("gbytes") => 1024.0 * 1024.0 * 1024.0,
+        u if u.eq_ignore_ascii_case("tbytes") => 1024.0 * 1024.0 * 1024.0 * 1024.0,
+        unit => {
+            debug!("unrecognized LSF memory unit `{unit}` in `{value}`");
+            return None;
+        }
+    };
+    let bytes = amount * multiplier;
+    (bytes.is_finite() && bytes >= 0.0).then_some(bytes as u64)
+}
+
+/// Parses an LSF CPU time measurement (e.g. `324.00 second(s)` or a bare
+/// number of seconds) into milliseconds.
+///
+/// Returns `None` for empty or unrecognized values, since utilization is
+/// advisory.
+fn parse_lsf_seconds(value: &str) -> Option<i64> {
+    let seconds: f64 = value.split_whitespace().next()?.parse().ok()?;
+    let ms = seconds * 1_000.0;
+    (ms.is_finite() && ms >= 0.0).then_some(ms as i64)
+}
+
 /// Represents information about an LSF job.
 #[derive(Debug)]
 struct Job {
     /// The current tick count of the job.
     tick: u64,
+    /// The unique name of the task execution attempt this job runs.
+    ///
+    /// Used to attribute engine events (e.g. resource utilization) to the
+    /// attempt.
+    name: String,
     /// The Crankshaft identifier for the job.
     crankshaft_id: TaskId,
     /// The last known state of the job.
@@ -267,12 +324,19 @@ impl MonitorState {
     }
 
     /// Adds a new job to the monitor state.
-    fn add_job(&mut self, job_id: u64, crankshaft_id: u64, completed: oneshot::Sender<Result<u8>>) {
+    fn add_job(
+        &mut self,
+        job_id: u64,
+        name: String,
+        crankshaft_id: u64,
+        completed: oneshot::Sender<Result<u8>>,
+    ) {
         let tick = self.tick;
         let prev = self.jobs.insert(
             job_id,
             Job {
                 tick,
+                name,
                 crankshaft_id,
                 state: JobState::Pending,
                 completed,
@@ -347,6 +411,21 @@ impl MonitorState {
                             );
 
                             let job = self.jobs.remove(&job_id).unwrap();
+
+                            // Report the utilization measured by LSF for the
+                            // attempt; this occurs for any termination —
+                            // successful, failed, or canceled alike.
+                            let utilization = record.utilization();
+                            if !utilization.is_empty() {
+                                send_event!(
+                                    events.engine(),
+                                    EngineEvent::TaskUtilization {
+                                        name: job.name.clone(),
+                                        utilization,
+                                    },
+                                );
+                            }
+
                             let _ = job.completed.send(Ok(exit_code));
                             continue;
                         } else {
@@ -549,7 +628,7 @@ impl Monitor {
 
         let (tx, rx) = oneshot::channel();
         let mut state = self.state.lock().expect("failed to lock state");
-        state.add_job(job_id, crankshaft_id, tx);
+        state.add_job(job_id, task_name.clone(), crankshaft_id, tx);
         drop(state);
 
         Ok(SubmittedJob {
@@ -1148,5 +1227,69 @@ mod tests {
         assert_eq!(name.len(), 8188);
         let name = truncate_job_name(&name);
         assert!(name.len() < LSF_JOB_NAME_MAX_LENGTH);
+    }
+
+    #[test]
+    fn lsf_memory_measurements_parse_to_bytes() {
+        assert_eq!(parse_lsf_memory("512 bytes"), Some(512));
+        assert_eq!(parse_lsf_memory("100 Kbytes"), Some(100 * 1024));
+        assert_eq!(parse_lsf_memory("230 Mbytes"), Some(230 * 1024 * 1024));
+        assert_eq!(
+            parse_lsf_memory("12.5 Gbytes"),
+            Some((12.5 * 1024.0 * 1024.0 * 1024.0) as u64)
+        );
+        assert_eq!(parse_lsf_memory("1 Tbytes"), Some(1024u64.pow(4)));
+
+        // Empty and unrecognized values are advisory and yield nothing.
+        assert_eq!(parse_lsf_memory(""), None);
+        assert_eq!(parse_lsf_memory("-"), None);
+        assert_eq!(parse_lsf_memory("12.5 parsecs"), None);
+        assert_eq!(parse_lsf_memory("lots"), None);
+    }
+
+    #[test]
+    fn lsf_cpu_time_measurements_parse_to_milliseconds() {
+        assert_eq!(parse_lsf_seconds("324.00 second(s)"), Some(324_000));
+        assert_eq!(parse_lsf_seconds("0.098000"), Some(98));
+        assert_eq!(parse_lsf_seconds("1.5"), Some(1_500));
+
+        assert_eq!(parse_lsf_seconds(""), None);
+        assert_eq!(parse_lsf_seconds("-"), None);
+        assert_eq!(parse_lsf_seconds("soon"), None);
+    }
+
+    #[test]
+    fn job_records_build_utilization_snapshots() {
+        let record = JobRecord {
+            job_id: "1234".to_string(),
+            state: "DONE".to_string(),
+            exit_code: "0".to_string(),
+            avg_memory: "100 Mbytes".to_string(),
+            max_memory: "230 Mbytes".to_string(),
+            cpu_used: "324.00 second(s)".to_string(),
+            user_cpu_time: "300.00".to_string(),
+            system_cpu_time: "24.00".to_string(),
+        };
+
+        let utilization = record.utilization();
+        assert_eq!(utilization.max_memory, Some(230 * 1024 * 1024));
+        assert_eq!(utilization.avg_memory, Some(100 * 1024 * 1024));
+        assert_eq!(utilization.cpu_time_ms, Some(324_000));
+        assert_eq!(utilization.user_cpu_time_ms, Some(300_000));
+        assert_eq!(utilization.system_cpu_time_ms, Some(24_000));
+        assert!(!utilization.is_empty());
+
+        // A record with no measurements yields an empty snapshot.
+        let record = JobRecord {
+            job_id: "1234".to_string(),
+            state: "EXIT".to_string(),
+            exit_code: "1".to_string(),
+            avg_memory: String::new(),
+            max_memory: String::new(),
+            cpu_used: String::new(),
+            user_cpu_time: String::new(),
+            system_cpu_time: String::new(),
+        };
+        assert!(record.utilization().is_empty());
     }
 }

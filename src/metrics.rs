@@ -176,6 +176,10 @@ impl MetricsCollector {
                 record.status = TaskStatus::Cached;
                 record.completed_at = Some(Utc::now());
             }
+            EngineEvent::TaskUtilization { .. } => {
+                // Resource utilization is not yet collected; this event will
+                // be consumed when utilization is reported.
+            }
             EngineEvent::TaskParked | EngineEvent::TaskUnparked { .. } => {}
         }
     }
