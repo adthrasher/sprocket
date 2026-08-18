@@ -220,9 +220,10 @@ impl TaskMonitorSvc {
                     .context("failed to serialize task constraints")?;
                 let _ = self.db.update_task_constraints(&name, &constraints).await?;
             }
-            EngineEvent::TaskUtilization { .. } => {
-                // Resource utilization is not yet recorded in the database;
-                // this event will be consumed when utilization is persisted.
+            EngineEvent::TaskUtilization { name, utilization } => {
+                let utilization = serde_json::to_string(&utilization)
+                    .context("failed to serialize task utilization")?;
+                let _ = self.db.update_task_utilization(&name, &utilization).await?;
             }
             EngineEvent::TaskRetrying {
                 prior_name,

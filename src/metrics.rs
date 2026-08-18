@@ -41,6 +41,9 @@ struct AttemptRecord {
     constraints: Option<serde_json::Value>,
     /// Why the attempt was retried, when it was.
     retry_cause: Option<serde_json::Value>,
+    /// The resource utilization observed for the attempt, when the backend
+    /// reported it.
+    utilization: Option<serde_json::Value>,
     /// When the attempt was first observed.
     created_at: DateTime<Utc>,
     /// When the attempt started executing.
@@ -59,6 +62,7 @@ impl AttemptRecord {
             exit_status: None,
             constraints: None,
             retry_cause: None,
+            utilization: None,
             created_at: Utc::now(),
             started_at: None,
             completed_at: None,
@@ -176,9 +180,10 @@ impl MetricsCollector {
                 record.status = TaskStatus::Cached;
                 record.completed_at = Some(Utc::now());
             }
-            EngineEvent::TaskUtilization { .. } => {
-                // Resource utilization is not yet collected; this event will
-                // be consumed when utilization is reported.
+            EngineEvent::TaskUtilization { name, utilization } => {
+                let utilization = serde_json::to_value(&utilization).ok();
+                self.attempt(&name, None, 0, TaskStatus::Initializing)
+                    .utilization = utilization;
             }
             EngineEvent::TaskParked | EngineEvent::TaskUnparked { .. } => {}
         }
@@ -260,6 +265,7 @@ impl MetricsCollector {
                 attempt: record.attempt,
                 constraints: record.constraints,
                 retry_cause: record.retry_cause,
+                utilization: record.utilization,
                 created_at: record.created_at,
                 started_at: record.started_at,
                 completed_at: record.completed_at,
@@ -415,5 +421,30 @@ mod tests {
         let record = &collector.attempts["wf-t-x1"];
         assert_eq!(record.status, TaskStatus::Cached);
         assert!(record.completed_at.is_some());
+    }
+
+    #[test]
+    fn utilization_is_recorded_on_the_attempt() {
+        let mut collector = MetricsCollector::default();
+
+        collector.handle_engine_event(EngineEvent::TaskInitializing {
+            id: "wf-t".to_string(),
+            name: "wf-t-x1".to_string(),
+            attempt: 0,
+        });
+        let mut snapshot = wdl::engine::TaskUtilizationSnapshot::default();
+        snapshot.max_memory = Some(241_172_480);
+        snapshot.cpu_time_ms = Some(324_000);
+        collector.handle_engine_event(EngineEvent::TaskUtilization {
+            name: "wf-t-x1".to_string(),
+            utilization: snapshot,
+        });
+
+        let utilization = collector.attempts["wf-t-x1"]
+            .utilization
+            .as_ref()
+            .expect("utilization should be recorded");
+        assert_eq!(utilization["max_memory"], 241_172_480u64);
+        assert_eq!(utilization["cpu_time_ms"], 324_000);
     }
 }

@@ -55,6 +55,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its `module.json`, pointing to `sprocket dev module lock`
   ([#999](https://github.com/stjude-rust-labs/sprocket/pull/999)).
 
+* Execution metrics now include observed resource utilization. Backends whose
+  scheduler reports utilization — currently LSF (via `bjobs`) and Slurm (via
+  `sacct`) — record each attempt's peak and average resident memory and its
+  total, user, and system CPU time at the attempt's termination (successful,
+  failed, or canceled alike). Utilization appears as a `utilization` field on
+  task and metrics API responses, in `metrics.json` for local runs, and in
+  `sprocket dev server metrics` output; attempts executed by other backends
+  report no utilization.
 * `sprocket dev server metrics <RUN>` reports a run's execution metrics:
   per call, every execution attempt with its wall and queue times, resolved
   execution constraints (cpu, memory, gpus), exit status, and retry cause,
