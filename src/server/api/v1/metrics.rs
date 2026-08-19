@@ -91,12 +91,32 @@ pub struct TaskAttemptMetrics {
 pub struct CallMetrics {
     /// The stable WDL call path shared by every attempt of this call.
     ///
-    /// Falls back to the attempt name for tasks recorded without attempt
-    /// attribution.
+    /// This is unique within the run: calls made inside subworkflows are
+    /// qualified by their call path, with levels joined by `--`. Falls back
+    /// to the attempt name for tasks recorded without attempt attribution.
     pub call_id: String,
+    /// The short display form of the call's identifier: the final level of
+    /// the call path.
+    ///
+    /// Unlike [`call_id`](Self::call_id), this is not necessarily unique
+    /// within the run.
+    pub name: String,
     /// The execution attempts of this call, ordered by attempt number and
     /// creation time.
     pub attempts: Vec<TaskAttemptMetrics>,
+}
+
+/// Derives the short display form of a call identifier: the final level of
+/// the `--`-joined call path.
+///
+/// Identifiers without a level separator (top-level calls and rows recorded
+/// before call paths were qualified) are their own short form.
+fn call_short_name(call_id: &str) -> String {
+    call_id
+        .rsplit_once("--")
+        .map(|(_, name)| name)
+        .unwrap_or(call_id)
+        .to_string()
 }
 
 /// Totals across every execution attempt of a run.
@@ -177,6 +197,7 @@ pub fn build_run_metrics(
         match calls.iter_mut().find(|c| c.call_id == call_id) {
             Some(call) => call.attempts.push(attempt),
             None => calls.push(CallMetrics {
+                name: call_short_name(&call_id),
                 call_id,
                 attempts: vec![attempt],
             }),
@@ -244,4 +265,22 @@ pub async fn get_run_metrics(
     Ok(Json(build_run_metrics(run, tasks, |name| {
         super::paths::get_task_logs(name)
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_names_are_the_final_call_path_level() {
+        // Top-level calls (and rows recorded before call paths were
+        // qualified) are their own short form.
+        assert_eq!(call_short_name("t"), "t");
+        assert_eq!(call_short_name("ns-t-alias-3"), "ns-t-alias-3");
+
+        // Qualified calls display the final level, which may itself contain
+        // single `-` separators.
+        assert_eq!(call_short_name("other-sub--t"), "t");
+        assert_eq!(call_short_name("a--b--ns-t-alias-3"), "ns-t-alias-3");
+    }
 }

@@ -197,13 +197,28 @@ fn call_section(call: &CallMetrics, colorize: bool) -> String {
     let mut out = String::new();
 
     let header = if colorize {
-        call.call_id.bold().to_string()
+        call.name.bold().to_string()
     } else {
-        call.call_id.clone()
+        call.name.clone()
     };
+
+    // When the call is qualified by a call path, show the full identifier so
+    // that same-named calls at different nesting levels remain
+    // distinguishable.
+    let qualifier = if call.name != call.call_id {
+        let full = format!("({id}) ", id = call.call_id);
+        if colorize {
+            full.dimmed().to_string()
+        } else {
+            full
+        }
+    } else {
+        String::new()
+    };
+
     let attempts = call.attempts.len();
     out.push_str(&format!(
-        "  {header} ({attempts} attempt{s})\n",
+        "  {header} {qualifier}({attempts} attempt{s})\n",
         s = if attempts == 1 { "" } else { "s" }
     ));
 
@@ -274,48 +289,69 @@ mod tests {
                 status: RunStatus::Completed,
                 wall_time_ms: Some(83_000),
             },
-            calls: vec![CallMetrics {
-                call_id: "wf-align".to_string(),
-                attempts: vec![
-                    TaskAttemptMetrics {
-                        name: "wf-align-x1".to_string(),
+            calls: vec![
+                CallMetrics {
+                    call_id: "wf-align".to_string(),
+                    name: "wf-align".to_string(),
+                    attempts: vec![
+                        TaskAttemptMetrics {
+                            name: "wf-align-x1".to_string(),
+                            attempt: 0,
+                            status: TaskStatus::Completed,
+                            exit_status: Some(137),
+                            wall_time_ms: Some(45_500),
+                            queued_ms: Some(300),
+                            constraints: Some(serde_json::json!({
+                                "cpu": 4.0,
+                                "memory": 8589934592i64,
+                                "gpu": ["nvidia-tesla-t4"],
+                            })),
+                            retry_cause: Some(serde_json::json!({
+                                "kind": "unacceptable_exit_code",
+                                "code": 137,
+                            })),
+                            utilization: None,
+                            logs: "/api/v1/tasks/wf-align-x1/logs".to_string(),
+                        },
+                        TaskAttemptMetrics {
+                            name: "wf-align-x2".to_string(),
+                            attempt: 1,
+                            status: TaskStatus::Completed,
+                            exit_status: Some(0),
+                            wall_time_ms: Some(37_000),
+                            queued_ms: Some(150),
+                            constraints: None,
+                            retry_cause: None,
+                            utilization: Some(serde_json::json!({
+                                "max_memory": 12025908428i64,
+                                "avg_memory": 8589934592i64,
+                                "cpu_time_ms": 324_000,
+                            })),
+                            logs: "/api/v1/tasks/wf-align-x2/logs".to_string(),
+                        },
+                    ],
+                },
+                // A call made inside a subworkflow: its identifier carries a
+                // call path and displays under its short name.
+                CallMetrics {
+                    call_id: "sub--wf-align".to_string(),
+                    name: "wf-align".to_string(),
+                    attempts: vec![TaskAttemptMetrics {
+                        name: "sub--wf-align-x1".to_string(),
                         attempt: 0,
                         status: TaskStatus::Completed,
-                        exit_status: Some(137),
-                        wall_time_ms: Some(45_500),
-                        queued_ms: Some(300),
-                        constraints: Some(serde_json::json!({
-                            "cpu": 4.0,
-                            "memory": 8589934592i64,
-                            "gpu": ["nvidia-tesla-t4"],
-                        })),
-                        retry_cause: Some(serde_json::json!({
-                            "kind": "unacceptable_exit_code",
-                            "code": 137,
-                        })),
-                        utilization: None,
-                        logs: "/api/v1/tasks/wf-align-x1/logs".to_string(),
-                    },
-                    TaskAttemptMetrics {
-                        name: "wf-align-x2".to_string(),
-                        attempt: 1,
-                        status: TaskStatus::Completed,
                         exit_status: Some(0),
-                        wall_time_ms: Some(37_000),
-                        queued_ms: Some(150),
+                        wall_time_ms: Some(10_000),
+                        queued_ms: Some(100),
                         constraints: None,
                         retry_cause: None,
-                        utilization: Some(serde_json::json!({
-                            "max_memory": 12025908428i64,
-                            "avg_memory": 8589934592i64,
-                            "cpu_time_ms": 324_000,
-                        })),
-                        logs: "/api/v1/tasks/wf-align-x2/logs".to_string(),
-                    },
-                ],
-            }],
+                        utilization: None,
+                        logs: "/api/v1/tasks/sub--wf-align-x1/logs".to_string(),
+                    }],
+                },
+            ],
             totals: RunMetricsTotals {
-                attempts: 2,
+                attempts: 3,
                 retries: 1,
                 cached: 0,
                 preempted: 0,
@@ -373,12 +409,16 @@ mod tests {
         let report = render_metrics(&body(), false);
         assert!(report.contains("Run `happy-dolphin-42`"));
         assert!(report.contains("completed, wall 1m23s"));
+        // A top-level call displays its identifier without a qualifier.
         assert!(report.contains("wf-align (2 attempts)"));
         assert!(report.contains("#0"));
         assert!(report.contains("exit 137"));
         assert!(report.contains("retried: unacceptable exit code 137"));
         assert!(report.contains("#1"));
         assert!(report.contains("peak 11.2 GiB, cpu 5m24s"));
-        assert!(report.contains("2 attempts total: 1 retried, 0 cached, 0 preempted"));
+        // A call inside a subworkflow displays its short name with the full
+        // identifier as a qualifier.
+        assert!(report.contains("wf-align (sub--wf-align) (1 attempt)"));
+        assert!(report.contains("3 attempts total: 1 retried, 0 cached, 0 preempted"));
     }
 }

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+#### Fixed
+
+* Call identifiers — and the task names minted from them — are now qualified
+  by their call path relative to the root workflow, so a call inside a
+  subworkflow no longer shares an identifier with a same-named call elsewhere
+  (e.g. a `call t` made through `call other.sub` is now identified as
+  `other-sub--t` rather than `t`). Path levels are joined by `--`, which
+  cannot occur within a single call's identifier, so the final level — the
+  short form of the call's identifier — remains recoverable for display.
+  Top-level call identifiers are unchanged. The run directory layout, which
+  nests by call alias, and call caching, which is keyed by task definition
+  rather than call site, are both unaffected.
+
 #### Added
 
 * Added support for the `ImagePull{Started, Failed, Finished}` `crankshaft` events ([#1117](https://github.com/stjude-rust-labs/sprocket/pull/1117)).

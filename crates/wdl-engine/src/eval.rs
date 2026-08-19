@@ -339,7 +339,8 @@ impl Default for CancellationContext {
 /// since the engine never announces one through [`EngineEvent`].
 ///
 /// The prefix contains a `.`, which a name minted for a WDL task can never
-/// contain: those names are a WDL call path, whose segments are WDL
+/// contain: those names are a WDL call path relative to the root workflow,
+/// whose levels are joined by `--` and whose segments within a level are WDL
 /// identifiers joined by `-`, followed by a `-` and an alphanumeric suffix.
 pub const CLEANUP_TASK_NAME_PREFIX: &str = "cleanup.";
 
@@ -355,8 +356,9 @@ pub const CLEANUP_TASK_NAME_PREFIX: &str = "cleanup.";
 /// ordinal.
 ///
 /// The separator can never appear in an evaluator-minted name: those names are
-/// a WDL call path, whose segments are WDL identifiers joined by `-`, followed
-/// by a `-` and an alphanumeric suffix.
+/// a WDL call path, whose levels are joined by `--` and whose segments within
+/// a level are WDL identifiers joined by `-`, followed by a `-` and an
+/// alphanumeric suffix.
 pub const RESUBMIT_NAME_SEPARATOR: char = '~';
 
 /// Derives the name for a backend-local resubmission of a task execution.

@@ -594,6 +594,13 @@ struct State {
     temp_dir: PathBuf,
     /// The calls directory path.
     calls_dir: PathBuf,
+    /// The call path of this workflow relative to the root workflow.
+    ///
+    /// This is empty for the root workflow. For a workflow evaluated via a
+    /// `call` statement, it is the `--`-joined chain of call identifiers
+    /// leading to it, which prefixes the identifiers of the calls it makes so
+    /// that same-named calls at different nesting levels remain distinct.
+    call_path: String,
 }
 
 impl State {
@@ -623,7 +630,13 @@ impl Evaluator {
         }
 
         let result = self
-            .perform_workflow_evaluation(document, inputs, eval_root_dir.as_ref(), workflow.name())
+            .perform_workflow_evaluation(
+                document,
+                inputs,
+                eval_root_dir.as_ref(),
+                workflow.name(),
+                "",
+            )
             .await;
 
         if self.cancellation.user_canceled()
@@ -639,12 +652,17 @@ impl Evaluator {
     ///
     /// This method skips checking the document (and its transitive imports) for
     /// analysis errors as the check occurs at the `evaluate` entrypoint.
+    ///
+    /// `path` is the call path of this workflow relative to the root workflow
+    /// (empty for the root workflow itself); it prefixes the identifiers of
+    /// the calls this workflow makes.
     async fn perform_workflow_evaluation(
         &self,
         document: &Document,
         inputs: WorkflowInputs,
         eval_root_dir: &Path,
         id: &str,
+        path: &str,
     ) -> EvaluationResult<Outputs> {
         // Validate the inputs for the workflow
         let workflow = document
@@ -741,6 +759,7 @@ impl Evaluator {
             base_dir,
             temp_dir,
             calls_dir,
+            call_path: path.to_string(),
         });
 
         // Evaluate the root graph to completion
@@ -1611,6 +1630,9 @@ impl State {
                                 inputs.unwrap_workflow_inputs(),
                                 root_dir,
                                 callee_id,
+                                // The callee's calls are prefixed by its own
+                                // call path.
+                                callee_id,
                             )
                             .await
                     }
@@ -1741,12 +1763,27 @@ impl State {
             sep = if scatter_index.is_empty() { "" } else { "-" },
         );
 
-        let call_id = format_id(
+        // The call identifier is qualified by this workflow's call path so
+        // that same-named calls at different nesting levels remain distinct;
+        // the path is empty for the root workflow, so its calls keep their
+        // unqualified identifiers.
+        //
+        // Path levels are joined by `--`, which can never occur within a
+        // single call's identifier (whose segments are non-empty identifiers
+        // and scatter indices joined by single `-`), so the final level — the
+        // short form of the call's identifier — is recoverable from the
+        // qualified identifier for display.
+        let relative_id = format_id(
             namespace.as_ref().map(|(n, _)| n.text()),
             target.text(),
             alias.text(),
             &scatter_index,
         );
+        let call_id = if self.call_path.is_empty() {
+            relative_id
+        } else {
+            format!("{path}--{relative_id}", path = self.call_path)
+        };
 
         // Finally, evaluate the task or workflow and return the outputs
         let outputs = call_target
@@ -1863,6 +1900,7 @@ mod test {
 
     use super::*;
     use crate::CancellationContext;
+    use crate::EngineEvent;
     use crate::Events;
     use crate::config::Config;
     use crate::config::FailureMode;
@@ -2557,6 +2595,131 @@ workflow w {
         assert_eq!(state.tasks_created.load(Ordering::SeqCst), 10);
         assert_eq!(state.tasks_started.load(Ordering::SeqCst), 10);
         assert_eq!(state.tasks_completed.load(Ordering::SeqCst), 10);
+    }
+
+    #[tokio::test]
+    async fn it_qualifies_nested_call_ids() {
+        // A workflow and a subworkflow both call a task named `t`; the two
+        // calls must remain distinct: the subworkflow's call identifier is
+        // prefixed by its call path while the root workflow's is not.
+        let root_dir = TempDir::new().expect("failed to create temporary directory");
+        fs::write(
+            root_dir.path().join("other.wdl"),
+            r#"
+version 1.1
+
+task t {
+  command <<<>>>
+}
+
+workflow sub {
+  call t
+}
+"#,
+        )
+        .expect("failed to write WDL source file");
+
+        let source_path = root_dir.path().join("source.wdl");
+        fs::write(
+            &source_path,
+            r#"
+version 1.1
+
+import "other.wdl"
+
+task t {
+  command <<<>>>
+}
+
+workflow w {
+  call t
+  call other.sub
+}
+"#,
+        )
+        .expect("failed to write WDL source file");
+
+        // Analyze the source files
+        let analyzer = Analyzer::new(
+            AnalysisConfig::default().with_diagnostics_config(DiagnosticsConfig::except_all()),
+            |(), _, _, _| async {},
+        );
+        analyzer
+            .add_directory(root_dir.path())
+            .await
+            .expect("failed to add directory");
+        let results = analyzer
+            .analyze(())
+            .await
+            .expect("failed to analyze document");
+        assert_eq!(results.len(), 2, "expected only two results");
+
+        let config = Config {
+            backends: [("default".to_string(), LocalBackendConfig::default().into())].into(),
+            ..Default::default()
+        };
+        let events = Events::new(100);
+        let mut engine_rx = events.subscribe_engine().unwrap();
+        let ids = tokio::spawn(async move {
+            let mut ids = Vec::new();
+            loop {
+                match engine_rx.recv().await {
+                    Ok(EngineEvent::TaskInitializing { id, name, .. }) => {
+                        // The minted task name is derived from the id.
+                        assert!(
+                            name.starts_with(&format!("{id}-")),
+                            "name `{name}` should be prefixed by id `{id}`"
+                        );
+                        ids.push(id);
+                    }
+                    Ok(_) => continue,
+                    Err(RecvError::Closed) => break,
+                    Err(e) => panic!("failed to receive event: {e}"),
+                }
+            }
+            ids
+        });
+
+        let evaluator = Evaluator::new(root_dir.path(), config.into(), Default::default(), events)
+            .await
+            .unwrap();
+
+        evaluator
+            .evaluate_workflow(
+                results
+                    .iter()
+                    .find(|r| r.document().uri().as_str().ends_with("source.wdl"))
+                    .expect("should have result")
+                    .document(),
+                WorkflowInputs::default(),
+                root_dir.path(),
+            )
+            .await
+            .map_err(|e| e.to_string())
+            .expect("failed to evaluate workflow");
+
+        drop(evaluator);
+        let mut ids = ids.await.expect("failed to await events task");
+        ids.sort();
+
+        // The root workflow's call keeps its unqualified identifier; the
+        // subworkflow's call is prefixed by its call path, with levels
+        // joined by `--` so the short form remains recoverable.
+        assert_eq!(ids, ["other-sub--t", "t"]);
+
+        // The run directory layout is unaffected by call id qualification:
+        // nesting comes from the alias-based directory tree.
+        assert!(
+            root_dir.path().join("calls/t/attempts/0").is_dir(),
+            "root call directory should be unchanged"
+        );
+        assert!(
+            root_dir
+                .path()
+                .join("calls/sub/calls/t/attempts/0")
+                .is_dir(),
+            "nested call directory should be unchanged"
+        );
     }
 
     #[tokio::test]

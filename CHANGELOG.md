@@ -75,9 +75,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retried — the retry cause (an unacceptable exit code, or preemption). A new
   `GET /api/v1/runs/{id}/metrics` endpoint reports the run's wall time and,
   per call, every execution attempt with its wall and queue times, exit
-  status, constraints, retry cause, and a reference to its logs. The
-  `/api/v1/runs/{id}/tasks` and `/api/v1/tasks` responses gained the
-  `call_id`, `attempt`, `constraints`, and `retry_cause` fields.
+  status, constraints, retry cause, and a reference to its logs. Calls are
+  grouped by their fully-qualified call id (calls made inside subworkflows
+  are qualified by their call path), with a short display `name` alongside;
+  the CLI report shows the short name and appends the full id when they
+  differ. The `/api/v1/runs/{id}/tasks` and `/api/v1/tasks` responses gained
+  the `call_id`, `attempt`, `constraints`, and `retry_cause` fields.
 * `dev server` now reports finer-grained progress. A run is `analyzing` while
   its document is resolved and type checked, and a task reports `initializing`,
   `localizing` while its inputs are transferred, or `cached` when the call

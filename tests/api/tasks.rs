@@ -868,6 +868,8 @@ async fn run_metrics_groups_attempts_by_call(pool: sqlx::SqlitePool) {
         .iter()
         .find(|c| c["call_id"] == "wf-a")
         .expect("wf-a should be present");
+    // A top-level call's short name is its identifier.
+    assert_eq!(wf_a["name"], "wf-a");
     let attempts = wf_a["attempts"].as_array().unwrap();
     assert_eq!(attempts.len(), 2);
 
