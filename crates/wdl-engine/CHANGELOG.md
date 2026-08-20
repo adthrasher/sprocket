@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   option; when set, each task's peak and average memory and cumulative CPU
   time are sampled from the Docker daemon at the given interval, in seconds,
   and reported in the run's metrics ([#XX](https://github.com/stjude-rust-labs/sprocket/pull/XX)).
+* Added the `backends.<name>.resource_usage_metadata` TES configuration
+  option; when enabled, tasks are polled with the `BASIC` view and the
+  documented `TaskLog.metadata` resource usage keys reported by the server
+  are recorded as task resource usage ([#XX](https://github.com/stjude-rust-labs/sprocket/pull/XX)).
 
 #### Fixed
 

@@ -1737,6 +1737,19 @@ pub struct TesBackendConfig {
     #[toml(default)]
     #[schemars(default)]
     pub insecure: bool,
+
+    /// Whether or not to read task resource usage from the TES server's task
+    /// log metadata.
+    ///
+    /// When enabled, tasks are polled with the `BASIC` view and the
+    /// documented resource usage metadata keys (e.g. `peak_memory_bytes`,
+    /// `avg_memory_bytes`, `cpu_time_ms`), when reported by the server, are
+    /// recorded as task resource usage.
+    ///
+    /// Defaults to `false`.
+    #[toml(default)]
+    #[schemars(default)]
+    pub resource_usage_metadata: bool,
 }
 
 impl TesBackendConfig {

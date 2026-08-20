@@ -58,6 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * The Docker backend can now sample task resource usage (peak/average memory
   and CPU time) via the new `backends.<name>.resource_usage_interval`
   configuration option ([#XX](https://github.com/stjude-rust-labs/sprocket/pull/XX)).
+* TES backends can now report task resource usage: enabling the new
+  `backends.<name>.resource_usage_metadata` option reads the documented
+  `TaskLog.metadata` keys from servers that populate them (e.g. Planetary)
+  and records the usage in the run metrics ([#XX](https://github.com/stjude-rust-labs/sprocket/pull/XX)).
 * Execution metrics now include observed resource utilization. Backends whose
   scheduler reports utilization — currently LSF (via `bjobs`) and Slurm (via
   `sacct`) — record each attempt's peak and average resident memory and its
