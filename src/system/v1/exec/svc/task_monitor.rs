@@ -314,11 +314,11 @@ impl TaskMonitorSvc {
                 let _ = self.db.update_task_cached(&name, Utc::now()).await?;
                 self.unfinished.remove(&name);
             }
-            EngineEvent::TaskDiskUsage { name, disk_used } => {
-                // Merge the engine-measured disk usage into whatever the
-                // backend may have reported. The monitor is the only writer
-                // of this column while the run executes, so the
-                // read-modify-write is not racy.
+            EngineEvent::TaskUsageMeasured { name, usage } => {
+                // Merge the engine-measured fields over whatever the backend
+                // may have reported. The monitor is the only writer of this
+                // column while the run executes, so the read-modify-write is
+                // not racy.
                 let mut utilization = match self.db.get_task(&name).await {
                     Ok(task) => task
                         .utilization
@@ -327,8 +327,16 @@ impl TaskMonitorSvc {
                         .unwrap_or_else(|| serde_json::json!({})),
                     Err(_) => serde_json::json!({}),
                 };
-                if let Some(map) = utilization.as_object_mut() {
-                    map.insert("disk_used".to_string(), disk_used.into());
+                let measured = serde_json::to_value(&usage)
+                    .context("failed to serialize task resource usage")?;
+                if let (Some(map), Some(measured)) =
+                    (utilization.as_object_mut(), measured.as_object())
+                {
+                    for (key, value) in measured {
+                        if !value.is_null() {
+                            map.insert(key.clone(), value.clone());
+                        }
+                    }
                 }
                 let utilization = serde_json::to_string(&utilization)
                     .context("failed to serialize task utilization")?;

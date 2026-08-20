@@ -97,6 +97,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   execution backend, the Sprocket version, and the bytes transferred during
   localization as a data-movement proxy (explicitly not a billing egress
   figure).
+* An opt-in measurement shim (`run.task.measure-resource-usage`) records CPU
+  time and, in containers, peak resident memory from within each task's
+  execution environment — on any backend, including TES, without requiring
+  measurement tools in the container. This provides resource utilization in
+  environments whose scheduler does not report it.
 * `dev server` now reports finer-grained progress. A run is `analyzing` while
   its document is resolved and type checked, and a task reports `initializing`,
   `localizing` while its inputs are transferred, or `cached` when the call

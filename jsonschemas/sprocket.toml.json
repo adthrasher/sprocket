@@ -419,6 +419,11 @@
           "description": "The behavior when a task's `memory` requirement cannot be met.",
           "$ref": "#/$defs/TaskResourceLimitBehavior"
         },
+        "measure_resource_usage": {
+          "description": "Whether to measure a task's resource usage from within its execution\nenvironment.\n\nWhen enabled, the engine wraps each task command with a portable\nmeasurement shim that records CPU time and, in containerized\nenvironments, peak resident memory, reporting them as resource usage\nmetrics. This works on any backend — including remote ones like TES —\nwithout requiring measurement tools in the container.\n\nThe shim writes a small hidden file (`.sprocket_usage`) into the\ntask's work directory, which is removed after collection on local\nfile systems but remains in remote work directories.\n\nDefaults to `false`.",
+          "type": "boolean",
+          "default": false
+        },
         "cache_dir": {
           "description": "The call cache directory to use for caching task execution results.\n\nDefaults to an operating system specific cache directory for the user.",
           "type": "string",

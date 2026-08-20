@@ -40,6 +40,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   query now additionally requests the `MaxRSS` and `AveRSS` fields so
   memory reports resident set sizes for parity with LSF). Backends that
   cannot observe utilization never emit the event.
+* Added an opt-in resource usage measurement shim
+  (`task.measure_resource_usage`, off by default): the engine wraps each task
+  command with a portable POSIX shell shim that records the command's CPU
+  time (from `/proc/self/stat`) and, in containerized environments, the
+  container's peak resident memory (from the cgroup), without requiring any
+  measurement tools in the container and without touching the task's stdout,
+  stderr, exit code, or call cache key. Measurements are reported through the
+  engine's usage event and work on any backend, including remote ones like
+  TES (where the shim's recording file remains in the work directory; on
+  local file systems it is removed after collection). CPU times assume the
+  standard 100Hz Linux clock tick; on systems without `/proc` the shim
+  records nothing and task behavior is unchanged.
+* The engine's disk usage event is now `TaskUsageMeasured`, carrying a full
+  resource usage snapshot of whatever the engine measured (work directory
+  disk usage, and the shim's recordings when enabled); consumers merge the
+  measured fields over anything the backend reported.
 * `TaskConstraintsSnapshot` now records the resolved retry policy and curated
   hints alongside the constraints: `max_retries`, `preemptible`, `max_cpu`,
   and `max_memory`.

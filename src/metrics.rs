@@ -240,15 +240,25 @@ impl MetricsCollector {
                 record.status = TaskStatus::Cached;
                 record.completed_at = Some(Utc::now());
             }
-            EngineEvent::TaskDiskUsage { name, disk_used } => {
-                // Merge the engine-measured disk usage into whatever the
-                // backend may have reported.
+            EngineEvent::TaskUsageMeasured { name, usage } => {
+                // Merge the engine-measured fields over whatever the backend
+                // may have reported.
                 let record = self.attempt(&name, None, 0, TaskStatus::Initializing);
                 let utilization = record
                     .utilization
                     .get_or_insert_with(|| serde_json::json!({}));
-                if let Some(map) = utilization.as_object_mut() {
-                    map.insert("disk_used".to_string(), disk_used.into());
+                if let (Some(map), Some(measured)) = (
+                    utilization.as_object_mut(),
+                    serde_json::to_value(&usage)
+                        .ok()
+                        .as_ref()
+                        .and_then(|m| m.as_object()),
+                ) {
+                    for (key, value) in measured {
+                        if !value.is_null() {
+                            map.insert(key.clone(), value.clone());
+                        }
+                    }
                 }
             }
             EngineEvent::TaskParked | EngineEvent::TaskUnparked { .. } => {}
@@ -618,9 +628,11 @@ mod tests {
             name: "wf-t-x1".to_string(),
             attempt: 0,
         });
-        collector.handle_engine_event(EngineEvent::TaskDiskUsage {
+        let mut measured = crankshaft_events::TaskResourceUsage::default();
+        measured.disk_used = Some(4096);
+        collector.handle_engine_event(EngineEvent::TaskUsageMeasured {
             name: "wf-t-x1".to_string(),
-            disk_used: 4096,
+            usage: measured,
         });
 
         let utilization = collector.attempts["wf-t-x1"]

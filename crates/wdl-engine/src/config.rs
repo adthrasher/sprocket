@@ -1181,6 +1181,23 @@ pub struct TaskConfig {
     #[toml(default)]
     #[schemars(default)]
     pub memory_limit_behavior: TaskResourceLimitBehavior,
+    /// Whether to measure a task's resource usage from within its execution
+    /// environment.
+    ///
+    /// When enabled, the engine wraps each task command with a portable
+    /// measurement shim that records CPU time and, in containerized
+    /// environments, peak resident memory, reporting them as resource usage
+    /// metrics. This works on any backend — including remote ones like TES —
+    /// without requiring measurement tools in the container.
+    ///
+    /// The shim writes a small hidden file (`.sprocket_usage`) into the
+    /// task's work directory, which is removed after collection on local
+    /// file systems but remains in remote work directories.
+    ///
+    /// Defaults to `false`.
+    #[toml(default)]
+    #[schemars(default)]
+    pub measure_resource_usage: bool,
     /// The call cache directory to use for caching task execution results.
     ///
     /// Defaults to an operating system specific cache directory for the user.
@@ -1238,6 +1255,7 @@ impl Default for TaskConfig {
             shell: default_task_shell().into(),
             cpu_limit_behavior: Default::default(),
             memory_limit_behavior: Default::default(),
+            measure_resource_usage: false,
             cache_dir: cache_dir_sentinel().into(),
             cache: Default::default(),
             digests: Default::default(),
