@@ -33,6 +33,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   query now additionally requests the `MaxRSS` and `AveRSS` fields so
   memory reports resident set sizes for parity with LSF). Backends that
   cannot observe utilization never emit the event.
+* The LSF and Slurm backends now report an execution attempt's observed
+  resource utilization (maximum/average resident memory in bytes; total,
+  user, and system CPU time in milliseconds) through Crankshaft's
+  `TaskResourceUsage` event: LSF sources it from `bjobs`, and Slurm from
+  `sacct`, whose query now additionally requests the `MaxRSS` and `AveRSS`
+  fields so memory reports resident set sizes for parity with LSF. The
+  event is emitted at the attempt's termination — successful, failed, or
+  canceled alike; backends that cannot observe utilization never emit it.
+
+#### Changed
+
+* Adapted to Crankshaft's per-execution fallback images and
+  `ExecutionResult`-returning backends.
 * `EngineEvent` now reports execution metrics data: `TaskInitializing` carries
   the 0-based `attempt` number, a new `TaskExecuting` event carries a
   serializable `TaskConstraintsSnapshot` of the attempt's resolved resource

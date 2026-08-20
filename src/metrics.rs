@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use chrono::DateTime;
 use chrono::Utc;
-use crankshaft::events::Event as CrankshaftEvent;
+use crankshaft_events::Event as CrankshaftEvent;
 use indexmap::IndexMap;
 use tokio::select;
 use tokio::sync::broadcast;
@@ -180,11 +180,6 @@ impl MetricsCollector {
                 record.status = TaskStatus::Cached;
                 record.completed_at = Some(Utc::now());
             }
-            EngineEvent::TaskUtilization { name, utilization } => {
-                let utilization = serde_json::to_value(&utilization).ok();
-                self.attempt(&name, None, 0, TaskStatus::Initializing)
-                    .utilization = utilization;
-            }
             EngineEvent::TaskParked | EngineEvent::TaskUnparked { .. } => {}
         }
     }
@@ -230,6 +225,15 @@ impl MetricsCollector {
             CrankshaftEvent::TaskPreempted { id } => {
                 if let Some(name) = self.task_names.get(&id).cloned() {
                     self.finish(&name, TaskStatus::Preempted, None);
+                }
+            }
+            CrankshaftEvent::TaskResourceUsage { id, usage } => {
+                // Utilization is a cumulative snapshot: the last received is
+                // authoritative.
+                if let Some(name) = self.task_names.get(&id).cloned() {
+                    let usage = serde_json::to_value(&usage).ok();
+                    self.attempt(&name, None, 0, TaskStatus::Initializing)
+                        .utilization = usage;
                 }
             }
             _ => {}
@@ -432,13 +436,18 @@ mod tests {
             name: "wf-t-x1".to_string(),
             attempt: 0,
         });
-        let mut snapshot = wdl::engine::TaskUtilizationSnapshot::default();
-        snapshot.max_memory = Some(241_172_480);
-        snapshot.cpu_time_ms = Some(324_000);
-        collector.handle_engine_event(EngineEvent::TaskUtilization {
+        // The Crankshaft channel announces the task and then reports its
+        // resource usage by task id.
+        collector.handle_crankshaft_event(CrankshaftEvent::TaskCreated {
+            id: 7,
             name: "wf-t-x1".to_string(),
-            utilization: snapshot,
+            tes_id: None,
+            token: Default::default(),
         });
+        let mut usage = crankshaft_events::TaskResourceUsage::default();
+        usage.max_memory = Some(241_172_480);
+        usage.cpu_time_ms = Some(324_000);
+        collector.handle_crankshaft_event(CrankshaftEvent::TaskResourceUsage { id: 7, usage });
 
         let utilization = collector.attempts["wf-t-x1"]
             .utilization

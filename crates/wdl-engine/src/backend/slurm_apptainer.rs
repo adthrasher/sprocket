@@ -27,6 +27,7 @@ use anyhow::bail;
 use bytesize::ByteSize;
 use crankshaft::events::Event as CrankshaftEvent;
 use crankshaft::events::TaskId;
+use crankshaft::events::TaskResourceUsage;
 use crankshaft::events::send_event;
 use futures::FutureExt;
 use futures::future::BoxFuture;
@@ -48,14 +49,12 @@ use tracing::warn;
 use super::ApptainerRuntime;
 use super::TaskExecutionBackend;
 use crate::CancellationContext;
-use crate::EngineEvent;
 use crate::EvaluationPath;
 use crate::Events;
 use crate::ONE_GIBIBYTE;
 use crate::Object;
 use crate::PrimitiveValue;
 use crate::TaskInputs;
-use crate::TaskUtilizationSnapshot;
 use crate::backend::ExecuteTaskRequest;
 use crate::backend::TaskExecutionConstraints;
 use crate::backend::TaskExecutionResult;
@@ -383,15 +382,17 @@ impl JobRecord<'_> {
     /// Memory measurements use the resident set size fields for parity with
     /// other backends. Fields that are empty or unparseable contribute
     /// nothing to the snapshot.
-    fn utilization(&self) -> TaskUtilizationSnapshot {
-        TaskUtilizationSnapshot {
-            max_memory: parse_slurm_size(self.max_rss),
-            avg_memory: parse_slurm_size(self.avg_rss),
-            cpu_time_ms: parse_slurm_duration(self.total_cpu),
-            user_cpu_time_ms: parse_slurm_duration(self.user_cpu),
-            system_cpu_time_ms: parse_slurm_duration(self.system_cpu),
-            ..Default::default()
-        }
+    // `TaskResourceUsage` is `#[non_exhaustive]`, which prohibits both struct
+    // literal construction and functional update syntax from another crate.
+    #[allow(clippy::field_reassign_with_default)]
+    fn utilization(&self) -> TaskResourceUsage {
+        let mut usage = TaskResourceUsage::default();
+        usage.max_memory = parse_slurm_size(self.max_rss);
+        usage.avg_memory = parse_slurm_size(self.avg_rss);
+        usage.cpu_time_ms = parse_slurm_duration(self.total_cpu);
+        usage.user_cpu_time_ms = parse_slurm_duration(self.user_cpu);
+        usage.system_cpu_time_ms = parse_slurm_duration(self.system_cpu);
+        usage
     }
 }
 
@@ -456,11 +457,6 @@ fn parse_slurm_duration(value: &str) -> Option<i64> {
 /// Represents information about a Slurm job for the monitor.
 #[derive(Debug)]
 struct Job {
-    /// The unique name of the task execution attempt this job runs.
-    ///
-    /// Used to attribute engine events (e.g. resource utilization) to the
-    /// attempt.
-    name: String,
     /// The Crankshaft identifier for the job.
     crankshaft_id: u64,
     /// The last known state of the job.
@@ -491,14 +487,12 @@ impl MonitorState {
     fn add_job(
         &mut self,
         job_id: u64,
-        name: String,
         crankshaft_id: TaskId,
         completed: oneshot::Sender<Result<JobExitCode>>,
     ) {
         let prev = self.jobs.insert(
             job_id,
             Job {
-                name,
                 crankshaft_id,
                 state: JobState::Pending,
                 completed,
@@ -594,13 +588,13 @@ impl MonitorState {
                     // Report the utilization measured by Slurm for the
                     // attempt; this occurs for any termination — successful,
                     // failed, or canceled alike.
-                    let utilization = record.utilization();
-                    if !utilization.is_empty() {
+                    let usage = record.utilization();
+                    if !usage.is_empty() {
                         send_event!(
-                            events.engine(),
-                            EngineEvent::TaskUtilization {
-                                name: job.name.clone(),
-                                utilization,
+                            events.crankshaft(),
+                            CrankshaftEvent::TaskResourceUsage {
+                                id: job.crankshaft_id,
+                                usage,
                             },
                         );
                     }
@@ -793,7 +787,7 @@ impl Monitor {
 
         let (tx, rx) = oneshot::channel();
         let mut state = self.state.lock().expect("failed to lock state");
-        state.add_job(job_id, task_name.clone(), crankshaft_id, tx);
+        state.add_job(job_id, crankshaft_id, tx);
         drop(state);
 
         Ok(SubmittedJob {

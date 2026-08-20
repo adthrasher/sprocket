@@ -705,6 +705,18 @@ async fn progress(
                             state.canceled += 1;
                             Some(id)
                         }
+                        CrankshaftEvent::TaskResourceUsage { .. } => {
+                            // Utilization is recorded by the metrics
+                            // collector, not displayed in the progress bar.
+                            continue;
+                        }
+                        CrankshaftEvent::ImagePullStarted { .. }
+                        | CrankshaftEvent::ImagePullFailed { .. }
+                        | CrankshaftEvent::ImagePullFinished { .. } => {
+                            // Image pulls are not currently displayed in the
+                            // progress bar.
+                            continue;
+                        }
                         CrankshaftEvent::TaskStderr { id, message } if show_stderr => {
                             let Some(task) = state.tasks.get_mut(&id) else {
                                 continue;
@@ -790,10 +802,6 @@ async fn progress(
                             // The failed attempt is finished; the retry is
                             // announced separately and re-enters preparation.
                             state.depart(&Arc::new(prior_name));
-                        }
-                        EngineEvent::TaskUtilization { .. } => {
-                            // Utilization is recorded by the metrics
-                            // collector, not displayed in the progress bar.
                         }
                         EngineEvent::ReusedCachedExecutionResult { name, .. } => {
                             state.depart(&Arc::new(name));

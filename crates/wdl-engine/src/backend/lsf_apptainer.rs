@@ -32,6 +32,7 @@ use bytesize::ByteSize;
 use cloud_copy::Alphanumeric;
 use crankshaft::events::Event as CrankshaftEvent;
 use crankshaft::events::TaskId;
+use crankshaft::events::TaskResourceUsage;
 use crankshaft::events::send_event;
 use futures::FutureExt;
 use futures::future::BoxFuture;
@@ -52,14 +53,12 @@ use tracing::warn;
 
 use super::TaskExecutionBackend;
 use crate::CancellationContext;
-use crate::EngineEvent;
 use crate::EvaluationPath;
 use crate::Events;
 use crate::ONE_GIBIBYTE;
 use crate::Object;
 use crate::PrimitiveValue;
 use crate::TaskInputs;
-use crate::TaskUtilizationSnapshot;
 use crate::backend::ApptainerRuntime;
 use crate::backend::ExecuteTaskRequest;
 use crate::backend::TaskExecutionConstraints;
@@ -221,15 +220,17 @@ impl JobRecord {
     ///
     /// Fields that are empty or unparseable contribute nothing to the
     /// snapshot.
-    fn utilization(&self) -> TaskUtilizationSnapshot {
-        TaskUtilizationSnapshot {
-            max_memory: parse_lsf_memory(&self.max_memory),
-            avg_memory: parse_lsf_memory(&self.avg_memory),
-            cpu_time_ms: parse_lsf_seconds(&self.cpu_used),
-            user_cpu_time_ms: parse_lsf_seconds(&self.user_cpu_time),
-            system_cpu_time_ms: parse_lsf_seconds(&self.system_cpu_time),
-            ..Default::default()
-        }
+    // `TaskResourceUsage` is `#[non_exhaustive]`, which prohibits both struct
+    // literal construction and functional update syntax from another crate.
+    #[allow(clippy::field_reassign_with_default)]
+    fn utilization(&self) -> TaskResourceUsage {
+        let mut usage = TaskResourceUsage::default();
+        usage.max_memory = parse_lsf_memory(&self.max_memory);
+        usage.avg_memory = parse_lsf_memory(&self.avg_memory);
+        usage.cpu_time_ms = parse_lsf_seconds(&self.cpu_used);
+        usage.user_cpu_time_ms = parse_lsf_seconds(&self.user_cpu_time);
+        usage.system_cpu_time_ms = parse_lsf_seconds(&self.system_cpu_time);
+        usage
     }
 }
 
@@ -271,11 +272,6 @@ fn parse_lsf_seconds(value: &str) -> Option<i64> {
 struct Job {
     /// The current tick count of the job.
     tick: u64,
-    /// The unique name of the task execution attempt this job runs.
-    ///
-    /// Used to attribute engine events (e.g. resource utilization) to the
-    /// attempt.
-    name: String,
     /// The Crankshaft identifier for the job.
     crankshaft_id: TaskId,
     /// The last known state of the job.
@@ -324,19 +320,12 @@ impl MonitorState {
     }
 
     /// Adds a new job to the monitor state.
-    fn add_job(
-        &mut self,
-        job_id: u64,
-        name: String,
-        crankshaft_id: u64,
-        completed: oneshot::Sender<Result<u8>>,
-    ) {
+    fn add_job(&mut self, job_id: u64, crankshaft_id: u64, completed: oneshot::Sender<Result<u8>>) {
         let tick = self.tick;
         let prev = self.jobs.insert(
             job_id,
             Job {
                 tick,
-                name,
                 crankshaft_id,
                 state: JobState::Pending,
                 completed,
@@ -415,13 +404,13 @@ impl MonitorState {
                             // Report the utilization measured by LSF for the
                             // attempt; this occurs for any termination —
                             // successful, failed, or canceled alike.
-                            let utilization = record.utilization();
-                            if !utilization.is_empty() {
+                            let usage = record.utilization();
+                            if !usage.is_empty() {
                                 send_event!(
-                                    events.engine(),
-                                    EngineEvent::TaskUtilization {
-                                        name: job.name.clone(),
-                                        utilization,
+                                    events.crankshaft(),
+                                    CrankshaftEvent::TaskResourceUsage {
+                                        id: job.crankshaft_id,
+                                        usage,
                                     },
                                 );
                             }
@@ -628,7 +617,7 @@ impl Monitor {
 
         let (tx, rx) = oneshot::channel();
         let mut state = self.state.lock().expect("failed to lock state");
-        state.add_job(job_id, task_name.clone(), crankshaft_id, tx);
+        state.add_job(job_id, crankshaft_id, tx);
         drop(state);
 
         Ok(SubmittedJob {

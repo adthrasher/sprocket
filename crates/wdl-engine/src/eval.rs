@@ -447,36 +447,6 @@ impl From<&TaskExecutionConstraints> for TaskConstraintsSnapshot {
     }
 }
 
-/// A serializable snapshot of the observed resource utilization of a task
-/// execution attempt.
-///
-/// Every field is optional: backends report the subset of measurements their
-/// execution environment provides, and backends that cannot observe
-/// utilization never emit [`EngineEvent::TaskUtilization`] at all. Currently
-/// the LSF and Slurm backends report utilization, sourced from `bjobs` and
-/// `sacct` respectively.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub struct TaskUtilizationSnapshot {
-    /// The maximum resident memory observed, in bytes.
-    pub max_memory: Option<u64>,
-    /// The average resident memory observed, in bytes.
-    pub avg_memory: Option<u64>,
-    /// The total CPU time consumed, in milliseconds.
-    pub cpu_time_ms: Option<i64>,
-    /// The user-mode CPU time consumed, in milliseconds.
-    pub user_cpu_time_ms: Option<i64>,
-    /// The system-mode CPU time consumed, in milliseconds.
-    pub system_cpu_time_ms: Option<i64>,
-}
-
-impl TaskUtilizationSnapshot {
-    /// Returns whether the snapshot contains no measurements at all.
-    pub fn is_empty(&self) -> bool {
-        self == &Self::default()
-    }
-}
-
 /// Represents an event from the WDL evaluation engine.
 #[derive(Debug, Clone)]
 pub enum EngineEvent {
@@ -543,20 +513,6 @@ pub enum EngineEvent {
         id: String,
         /// The unique name of the task for this attempt.
         name: String,
-    },
-    /// The resource utilization observed for a task execution attempt.
-    ///
-    /// Emitted at the attempt's termination — successful, failed, or canceled
-    /// alike — by backends whose execution environment reports utilization.
-    /// Backends that cannot observe utilization never emit this event.
-    TaskUtilization {
-        /// The unique name of the task for this attempt.
-        ///
-        /// For a backend-local resubmission, this is the derived name (see
-        /// [`RESUBMIT_NAME_SEPARATOR`]) of the resubmission that terminated.
-        name: String,
-        /// The observed resource utilization.
-        utilization: TaskUtilizationSnapshot,
     },
     /// A locally running task has been parked by the engine due to insufficient
     /// resources.
