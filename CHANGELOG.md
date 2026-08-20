@@ -84,6 +84,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the CLI report shows the short name and appends the full id when they
   differ. The `/api/v1/runs/{id}/tasks` and `/api/v1/tasks` responses gained
   the `call_id`, `attempt`, `constraints`, and `retry_cause` fields.
+* Execution metrics now cover the measurements the workflow case study
+  requires: each attempt reports its scheduler-pending time (`pending_ms`,
+  from a new `submitted_at` timestamp) and its allocated CPU time
+  (`allocated_cpu_time_ms`, the allocated CPU count times the execution wall
+  time); run totals sum allocated CPU time across every attempt — including
+  retries and failures — and total the execution time wasted to preemption;
+  constraints record the resolved retry policy and curated hints
+  (`max_retries`, `preemptible`, `max_cpu`, `max_memory`); utilization gains
+  the disk space used by each attempt's work directory (measured at
+  termination on local file systems); and the run summary records the
+  execution backend, the Sprocket version, and the bytes transferred during
+  localization as a data-movement proxy (explicitly not a billing egress
+  figure).
 * `dev server` now reports finer-grained progress. A run is `analyzing` while
   its document is resolved and type checked, and a task reports `initializing`,
   `localizing` while its inputs are transferred, or `cached` when the call

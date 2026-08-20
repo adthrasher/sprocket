@@ -774,6 +774,12 @@ async fn run_metrics_groups_attempts_by_call(pool: sqlx::SqlitePool) {
         .unwrap();
     let run_id = seed_run(&db, session_id, "metrics-run").await;
     db.start_run(run_id, Utc::now()).await.unwrap();
+    db.update_run_backend(run_id, "lsf_apptainer")
+        .await
+        .unwrap();
+    db.update_run_transfer_totals(run_id, r#"{"downloaded_bytes":1024,"uploaded_bytes":0}"#)
+        .await
+        .unwrap();
 
     // Call `wf-a`: a failed attempt that was retried, then a successful one.
     db.create_task(NewTask {
@@ -788,6 +794,7 @@ async fn run_metrics_groups_attempts_by_call(pool: sqlx::SqlitePool) {
     db.update_task_constraints("wf-a-x1", r#"{"cpu":2.0,"memory":1024}"#)
         .await
         .unwrap();
+    db.update_task_pending("wf-a-x1", Utc::now()).await.unwrap();
     db.update_task_started("wf-a-x1", Utc::now()).await.unwrap();
     db.update_task_completed("wf-a-x1", Some(137), Utc::now())
         .await
@@ -850,9 +857,13 @@ async fn run_metrics_groups_attempts_by_call(pool: sqlx::SqlitePool) {
     assert_eq!(response.status(), StatusCode::OK);
     let json = response_json(response).await;
 
-    // Run summary.
+    // Run summary, including the execution environment and transfer proxy.
     assert_eq!(json["run"]["uuid"], run_id.to_string().as_str());
     assert_eq!(json["run"]["name"], "metrics-run");
+    assert_eq!(json["run"]["backend"], "lsf_apptainer");
+    assert!(json["run"]["sprocket_version"].is_string());
+    assert_eq!(json["run"]["transfer"]["downloaded_bytes"], 1024);
+    assert_eq!(json["run"]["transfer"]["uploaded_bytes"], 0);
 
     // Totals.
     assert_eq!(json["totals"]["attempts"], 4);
@@ -887,6 +898,21 @@ async fn run_metrics_groups_attempts_by_call(pool: sqlx::SqlitePool) {
     assert_eq!(attempts[0]["retry_cause"]["code"], 137);
     assert!(attempts[0]["wall_time_ms"].as_i64().unwrap() >= 0);
     assert!(attempts[0]["queued_ms"].as_i64().unwrap() >= 0);
+    // The submitted attempt reports scheduler-pending time and allocated CPU
+    // time (2 CPUs times its execution wall time).
+    assert!(attempts[0]["pending_ms"].as_i64().unwrap() >= 0);
+    assert_eq!(
+        attempts[0]["allocated_cpu_time_ms"].as_i64().unwrap(),
+        2 * attempts[0]["wall_time_ms"].as_i64().unwrap()
+    );
+    // Totals include the allocated CPU time.
+    assert_eq!(
+        json["totals"]["allocated_cpu_time_ms"],
+        attempts[0]["allocated_cpu_time_ms"]
+    );
+    assert_eq!(json["totals"]["preemption_wasted_ms"], 0);
+    // The unsubmitted attempt has no pending time.
+    assert!(attempts[1]["pending_ms"].is_null());
     assert_eq!(attempts[0]["logs"], paths::get_task_logs("wf-a-x1"));
 
     // The successful attempt has no retry cause; its utilization (recorded

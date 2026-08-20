@@ -268,6 +268,26 @@ fn render_metrics(body: &RunMetricsResponse, colorize: bool) -> String {
         preempted = body.totals.preempted,
     ));
 
+    if body.totals.allocated_cpu_time_ms > 0 {
+        out.push_str(&format!(
+            "allocated cpu {}\n",
+            format_ms(Some(body.totals.allocated_cpu_time_ms))
+        ));
+    }
+    if body.totals.preemption_wasted_ms > 0 {
+        out.push_str(&format!(
+            "wasted to preemption {}\n",
+            format_ms(Some(body.totals.preemption_wasted_ms))
+        ));
+    }
+    if let Some(transfer) = &body.run.transfer {
+        out.push_str(&format!(
+            "transferred {downloaded:.1} GiB down, {uploaded:.1} GiB up\n",
+            downloaded = transfer.downloaded_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
+            uploaded = transfer.uploaded_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
+        ));
+    }
+
     out
 }
 
@@ -288,6 +308,9 @@ mod tests {
                 name: "happy-dolphin-42".to_string(),
                 status: RunStatus::Completed,
                 wall_time_ms: Some(83_000),
+                backend: Some("lsf_apptainer".to_string()),
+                sprocket_version: "0.0.0-test".to_string(),
+                transfer: None,
             },
             calls: vec![
                 CallMetrics {
@@ -301,6 +324,8 @@ mod tests {
                             exit_status: Some(137),
                             wall_time_ms: Some(45_500),
                             queued_ms: Some(300),
+                            pending_ms: Some(120),
+                            allocated_cpu_time_ms: Some(182_000),
                             constraints: Some(serde_json::json!({
                                 "cpu": 4.0,
                                 "memory": 8589934592i64,
@@ -320,6 +345,8 @@ mod tests {
                             exit_status: Some(0),
                             wall_time_ms: Some(37_000),
                             queued_ms: Some(150),
+                            pending_ms: Some(80),
+                            allocated_cpu_time_ms: Some(148_000),
                             constraints: None,
                             retry_cause: None,
                             utilization: Some(serde_json::json!({
@@ -343,6 +370,8 @@ mod tests {
                         exit_status: Some(0),
                         wall_time_ms: Some(10_000),
                         queued_ms: Some(100),
+                        pending_ms: Some(50),
+                        allocated_cpu_time_ms: Some(10_000),
                         constraints: None,
                         retry_cause: None,
                         utilization: None,
@@ -355,6 +384,8 @@ mod tests {
                 retries: 1,
                 cached: 0,
                 preempted: 0,
+                allocated_cpu_time_ms: 340_000,
+                preemption_wasted_ms: 0,
             },
         }
     }
@@ -420,5 +451,6 @@ mod tests {
         // identifier as a qualifier.
         assert!(report.contains("wf-align (sub--wf-align) (1 attempt)"));
         assert!(report.contains("3 attempts total: 1 retried, 0 cached, 0 preempted"));
+        assert!(report.contains("allocated cpu 5m40s"));
     }
 }

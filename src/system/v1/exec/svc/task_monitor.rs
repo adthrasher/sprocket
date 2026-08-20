@@ -7,6 +7,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use anyhow::Result;
 use chrono::Utc;
+use cloud_copy::TransferEvent;
 use crankshaft_events::Event as CrankshaftEvent;
 use tokio::select;
 use tokio::sync::broadcast;
@@ -18,6 +19,7 @@ use uuid::Uuid;
 use wdl::engine::CLEANUP_TASK_NAME_PREFIX;
 use wdl::engine::EngineEvent;
 
+use crate::metrics::TransferAccumulator;
 use crate::system::v1::db::Database;
 use crate::system::v1::db::LogSource;
 use crate::system::v1::db::NewTask;
@@ -29,12 +31,16 @@ enum Incoming {
     Crankshaft(CrankshaftEvent),
     /// An engine event.
     Engine(EngineEvent),
+    /// A transfer event.
+    Transfer(TransferEvent),
     /// A channel dropped events because the monitor could not keep up.
     Lagged,
     /// The Crankshaft channel closed.
     CrankshaftClosed,
     /// The engine channel closed.
     EngineClosed,
+    /// The transfer channel closed.
+    TransferClosed,
     /// The monitor was asked to shut down.
     Shutdown,
 }
@@ -74,6 +80,10 @@ pub struct TaskMonitorSvc {
     /// The names of tasks that have a database row but have not been observed
     /// reaching a terminal status.
     unfinished: HashSet<String>,
+    /// The transfer events receiver.
+    transfer: broadcast::Receiver<TransferEvent>,
+    /// Accumulates transfer byte totals for the run.
+    transfers: TransferAccumulator,
 }
 
 impl TaskMonitorSvc {
@@ -83,6 +93,7 @@ impl TaskMonitorSvc {
         db: Arc<dyn Database>,
         crankshaft: broadcast::Receiver<CrankshaftEvent>,
         engine: broadcast::Receiver<EngineEvent>,
+        transfer: broadcast::Receiver<TransferEvent>,
         shutdown: CancellationToken,
     ) -> Self {
         Self {
@@ -93,6 +104,8 @@ impl TaskMonitorSvc {
             shutdown,
             task_names: HashMap::new(),
             unfinished: HashSet::new(),
+            transfer,
+            transfers: TransferAccumulator::default(),
         }
     }
 
@@ -105,8 +118,9 @@ impl TaskMonitorSvc {
     pub async fn run(mut self) {
         let mut crankshaft_open = true;
         let mut engine_open = true;
+        let mut transfer_open = true;
 
-        while crankshaft_open || engine_open {
+        while crankshaft_open || engine_open || transfer_open {
             // The receivers are only borrowed for the duration of the select, so
             // that handling an event can take the monitor mutably.
             let incoming = select! {
@@ -121,6 +135,11 @@ impl TaskMonitorSvc {
                     Ok(event) => Incoming::Engine(event),
                     Err(RecvError::Lagged(_)) => Incoming::Lagged,
                     Err(RecvError::Closed) => Incoming::EngineClosed,
+                },
+                r = self.transfer.recv(), if transfer_open => match r {
+                    Ok(event) => Incoming::Transfer(event),
+                    Err(RecvError::Lagged(_)) => Incoming::Lagged,
+                    Err(RecvError::Closed) => Incoming::TransferClosed,
                 },
             };
 
@@ -141,8 +160,12 @@ impl TaskMonitorSvc {
                          true status",
                     );
                 }
+                Incoming::Transfer(event) => {
+                    self.transfers.handle_event(&event);
+                }
                 Incoming::CrankshaftClosed => crankshaft_open = false,
                 Incoming::EngineClosed => engine_open = false,
+                Incoming::TransferClosed => transfer_open = false,
                 Incoming::Shutdown => break,
             }
         }
@@ -152,6 +175,22 @@ impl TaskMonitorSvc {
         // task is written off as unfinished.
         self.drain().await;
         self.reconcile().await;
+
+        // Record the run's transfer totals, if any transfer was observed.
+        if let Some(totals) = self.transfers.totals() {
+            match serde_json::to_string(&totals) {
+                Ok(totals) => {
+                    if let Err(e) = self
+                        .db
+                        .update_run_transfer_totals(self.run_id, &totals)
+                        .await
+                    {
+                        error!("failed to record run transfer totals: {e:#}");
+                    }
+                }
+                Err(e) => error!("failed to serialize run transfer totals: {e:#}"),
+            }
+        }
     }
 
     /// Consumes every event still buffered on either channel.
@@ -175,6 +214,14 @@ impl TaskMonitorSvc {
                         error!("{e:#}");
                     }
                 }
+                Err(TryRecvError::Lagged(_)) => continue,
+                Err(TryRecvError::Empty | TryRecvError::Closed) => break,
+            }
+        }
+
+        loop {
+            match self.transfer.try_recv() {
+                Ok(event) => self.transfers.handle_event(&event),
                 Err(TryRecvError::Lagged(_)) => continue,
                 Err(TryRecvError::Empty | TryRecvError::Closed) => break,
             }
@@ -267,6 +314,26 @@ impl TaskMonitorSvc {
                 let _ = self.db.update_task_cached(&name, Utc::now()).await?;
                 self.unfinished.remove(&name);
             }
+            EngineEvent::TaskDiskUsage { name, disk_used } => {
+                // Merge the engine-measured disk usage into whatever the
+                // backend may have reported. The monitor is the only writer
+                // of this column while the run executes, so the
+                // read-modify-write is not racy.
+                let mut utilization = match self.db.get_task(&name).await {
+                    Ok(task) => task
+                        .utilization
+                        .as_deref()
+                        .and_then(|u| serde_json::from_str(u).ok())
+                        .unwrap_or_else(|| serde_json::json!({})),
+                    Err(_) => serde_json::json!({}),
+                };
+                if let Some(map) = utilization.as_object_mut() {
+                    map.insert("disk_used".to_string(), disk_used.into());
+                }
+                let utilization = serde_json::to_string(&utilization)
+                    .context("failed to serialize task utilization")?;
+                let _ = self.db.update_task_utilization(&name, &utilization).await?;
+            }
             EngineEvent::TaskParked | EngineEvent::TaskUnparked { .. } => {
                 // Parking is a property of the host's resource pool rather than
                 // of the task's own progress, and the task
@@ -305,7 +372,7 @@ impl TaskMonitorSvc {
                         TaskStatus::Pending,
                     ))
                     .await?;
-                let _ = self.db.update_task_pending(&name).await?;
+                let _ = self.db.update_task_pending(&name, Utc::now()).await?;
                 self.unfinished.insert(name);
             }
             CrankshaftEvent::TaskStarted { id } => {

@@ -40,6 +40,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   query now additionally requests the `MaxRSS` and `AveRSS` fields so
   memory reports resident set sizes for parity with LSF). Backends that
   cannot observe utilization never emit the event.
+* `TaskConstraintsSnapshot` now records the resolved retry policy and curated
+  hints alongside the constraints: `max_retries`, `preemptible`, `max_cpu`,
+  and `max_memory`.
+* `EngineEvent` gained a `TaskDiskUsage` event reporting the disk space used
+  by an execution attempt's work directory, measured by the engine at the
+  attempt's termination when the work directory is on a local file system.
+  This complements the scheduler-observed measurements a backend may report
+  through Crankshaft's `TaskResourceUsage` event.
+* `BackendConfig::name` returns the canonical name of the configured backend
+  kind.
 * The LSF and Slurm backends now report an execution attempt's observed
   resource utilization (maximum/average resident memory in bytes; total,
   user, and system CPU time in milliseconds) through Crankshaft's
@@ -101,6 +111,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Added
 
+* `TaskConstraintsSnapshot` now records the resolved retry policy and curated
+  hints alongside the constraints: `max_retries`, `preemptible`, `max_cpu`,
+  and `max_memory`.
+* `EngineEvent` gained a `TaskDiskUsage` event reporting the disk space used
+  by an execution attempt's work directory, measured by the engine at the
+  attempt's termination when the work directory is on a local file system.
+  This complements the scheduler-observed measurements a backend may report
+  through Crankshaft's `TaskResourceUsage` event.
+* `BackendConfig::name` returns the canonical name of the configured backend
+  kind.
 * The LSF and Slurm backends now write files to the attempt directory recording
   the command used to queue the task and the resulting job identifiers ([#1057](https://github.com/stjude-rust-labs/sprocket/pull/1057)).
 
