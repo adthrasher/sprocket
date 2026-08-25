@@ -132,6 +132,8 @@ fn explain_missing_bind_source(e: anyhow::Error) -> anyhow::Error {
 struct DockerTask<'a> {
     /// The engine configuration.
     config: Arc<Config>,
+    /// The sender for Crankshaft events.
+    crankshaft_events: Option<broadcast::Sender<crankshaft::events::Event>>,
     /// The task execution request.
     request: ExecuteTaskRequest<'a>,
     /// The underlying Crankshaft backend.
@@ -350,7 +352,15 @@ impl<'a> DockerTask<'a> {
             .volumes(volumes)
             .build();
 
-        let results = match self.backend.run(task, self.cancellation.second())?.await {
+        let results = match self
+            .backend
+            .run(
+                task,
+                self.crankshaft_events.clone(),
+                self.cancellation.second(),
+            )?
+            .await
+        {
             Ok(statuses) => statuses,
             Err(TaskRunError::Canceled) => return Ok(None),
             Err(e) => return Err(explain_missing_bind_source(e.into())),
@@ -401,6 +411,8 @@ struct CleanupTask {
     work_dir: EvaluationPath,
     /// The underlying Crankshaft backend.
     backend: Arc<docker::Backend>,
+    /// The sender for Crankshaft events.
+    crankshaft_events: Option<broadcast::Sender<crankshaft::events::Event>>,
     /// The evaluation cancellation context.
     cancellation: CancellationContext,
 }
@@ -457,7 +469,11 @@ impl CleanupTask {
 
         match self
             .backend
-            .run(task, self.cancellation.second())
+            .run(
+                task,
+                self.crankshaft_events.clone(),
+                self.cancellation.second(),
+            )
             .context("failed to submit cleanup task")?
             .await
         {
@@ -484,6 +500,8 @@ pub struct DockerBackend {
     config: Arc<Config>,
     /// The underlying Crankshaft backend.
     inner: Arc<docker::Backend>,
+    /// The sender for Crankshaft events, passed to each task run.
+    crankshaft_events: Option<broadcast::Sender<crankshaft::events::Event>>,
     /// The evaluation cancellation context.
     cancellation: CancellationContext,
     /// The maximum CPUs for any of one node.
@@ -521,10 +539,11 @@ impl DockerBackend {
                 .cleanup(backend_config.cleanup)
                 .build(),
             names.clone(),
-            events.crankshaft().cloned(),
         )
         .await
         .context("failed to initialize Docker backend")?;
+
+        let crankshaft_events = events.crankshaft().cloned();
 
         let resources = *backend.resources();
         let cpu = resources.cpu() as f64;
@@ -551,6 +570,7 @@ impl DockerBackend {
         Ok(Self {
             config,
             inner: Arc::new(backend),
+            crankshaft_events,
             cancellation,
             max_cpu,
             max_memory,
@@ -677,6 +697,7 @@ impl TaskExecutionBackend for DockerBackend {
                 config: self.config.clone(),
                 request,
                 backend: self.inner.clone(),
+                crankshaft_events: self.crankshaft_events.clone(),
                 name: task_name.clone(),
                 max_cpu,
                 max_memory,
@@ -695,6 +716,7 @@ impl TaskExecutionBackend for DockerBackend {
                             name,
                             work_dir: res.work_dir.clone(),
                             backend: self.inner.clone(),
+                            crankshaft_events: self.crankshaft_events.clone(),
                             cancellation: self.cancellation.clone(),
                         };
 
