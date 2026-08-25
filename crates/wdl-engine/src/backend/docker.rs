@@ -26,6 +26,7 @@ use crankshaft::engine::task::output::Type as OutputType;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use nonempty::NonEmpty;
+use tokio::sync::broadcast;
 use tracing::debug;
 use tracing::info;
 use tracing::warn;
@@ -537,6 +538,7 @@ impl DockerBackend {
         let backend = docker::Backend::initialize_default_with(
             backend::docker::Config::builder()
                 .cleanup(backend_config.cleanup)
+                .maybe_resource_usage_interval(backend_config.resource_usage_interval)
                 .build(),
             names.clone(),
         )
