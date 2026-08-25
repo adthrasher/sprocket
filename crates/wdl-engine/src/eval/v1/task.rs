@@ -254,7 +254,7 @@ const ASSUMED_CLOCK_TICKS_PER_SECOND: u64 = 100;
 /// its exit code and any `set -e` semantics within it) and then, best-effort
 /// and without touching stdout or stderr, records:
 ///
-/// * the shell's child CPU times in clock ticks, read from `/proc/self/stat`
+/// * the shell's child CPU times in clock ticks, read from `/proc/$$/stat`
 ///   (fields `cutime`/`cstime` accumulate the reaped subshell, i.e. the entire
 ///   command); and
 /// * the peak resident memory from the cgroup (v2 `memory.peak`, or v1
@@ -273,7 +273,11 @@ fn wrap_command_with_usage_shim(command: &str) -> String {
 )
 __sprocket_rc=$?
 {{
-    __sprocket_stat=$(cat /proc/self/stat 2>/dev/null) || __sprocket_stat=
+    # `$$` is used rather than `self`: the command substitution below runs in
+    # a forked child, where `/proc/self` would resolve to the child itself
+    # (whose reaped-children CPU times are zero), while `$$` remains the PID
+    # of this shell, whose cutime/cstime include the reaped payload subshell
+    __sprocket_stat=$(cat /proc/$$/stat 2>/dev/null) || __sprocket_stat=
     if [ -n "$__sprocket_stat" ]; then
         set -- ${{__sprocket_stat##*) }}
         printf 'cutime_ticks=%s\ncstime_ticks=%s\n' "${{14}}" "${{15}}" > "$__sprocket_usage_file"
@@ -296,6 +300,12 @@ exit $__sprocket_rc
 /// `containerized` indicates whether the attempt executed in a container;
 /// the cgroup peak memory reading is only container-scoped there and is
 /// discarded for host execution, where it would reflect the whole session.
+///
+/// Note that the cgroup peak is the peak of total cgroup memory usage, which
+/// includes reclaimable page cache; it can therefore exceed a task's memory
+/// constraint and read higher than the working-set values reported by
+/// sampling producers (e.g. the Docker stats sampler, which subtracts the
+/// inactive file cache).
 fn parse_usage_file(contents: &str, containerized: bool) -> crankshaft::events::TaskResourceUsage {
     /// Converts clock ticks to milliseconds.
     fn ticks_to_ms(ticks: u64) -> i64 {
@@ -3285,6 +3295,11 @@ task test {
         assert!(wrapped.trim_end().ends_with("exit $__sprocket_rc"));
         // Measurements are written to the usage file in the work directory.
         assert!(wrapped.contains(super::USAGE_FILE_NAME));
+        // CPU times must be read via `$$` (this shell), not `self`, which
+        // would resolve to the forked command substitution child and always
+        // report zero reaped-children CPU time.
+        assert!(wrapped.contains("/proc/$$/stat"));
+        assert!(!wrapped.contains("/proc/self/stat"));
     }
 
     #[test]
