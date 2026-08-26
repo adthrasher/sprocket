@@ -710,13 +710,6 @@ async fn progress(
                             // collector, not displayed in the progress bar.
                             continue;
                         }
-                        CrankshaftEvent::ImagePullStarted { .. }
-                        | CrankshaftEvent::ImagePullFailed { .. }
-                        | CrankshaftEvent::ImagePullFinished { .. } => {
-                            // Image pulls are not currently displayed in the
-                            // progress bar.
-                            continue;
-                        }
                         CrankshaftEvent::TaskStderr { id, message } if show_stderr => {
                             let Some(task) = state.tasks.get_mut(&id) else {
                                 continue;

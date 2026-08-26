@@ -373,14 +373,7 @@ impl TaskMonitorSvc {
                         .await?;
                 }
             }
-            CrankshaftEvent::ImagePullStarted { id: _, name: _ }
-            | CrankshaftEvent::ImagePullFailed {
-                id: _,
-                name: _,
-                message: _,
-            }
-            | CrankshaftEvent::ImagePullFinished { id: _, name: _ }
-            | CrankshaftEvent::TaskContainerCreated {
+            CrankshaftEvent::TaskContainerCreated {
                 id: _,
                 container: _,
             }

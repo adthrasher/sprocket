@@ -261,10 +261,10 @@ fn parse_lsf_memory(value: &str) -> Option<u64> {
 ///
 /// Returns `None` for empty or unrecognized values, since utilization is
 /// advisory.
-fn parse_lsf_seconds(value: &str) -> Option<i64> {
+fn parse_lsf_seconds(value: &str) -> Option<u64> {
     let seconds: f64 = value.split_whitespace().next()?.parse().ok()?;
     let ms = seconds * 1_000.0;
-    (ms.is_finite() && ms >= 0.0).then_some(ms as i64)
+    (ms.is_finite() && ms >= 0.0).then_some(ms as u64)
 }
 
 /// Represents information about an LSF job.

@@ -426,7 +426,7 @@ fn parse_slurm_size(value: &str) -> Option<u64> {
 ///
 /// Returns `None` for empty or unrecognized values, since utilization is
 /// advisory.
-fn parse_slurm_duration(value: &str) -> Option<i64> {
+fn parse_slurm_duration(value: &str) -> Option<u64> {
     let value = value.trim();
     if value.is_empty() {
         return None;
@@ -451,7 +451,7 @@ fn parse_slurm_duration(value: &str) -> Option<i64> {
     };
 
     let ms = (((days * 24.0 + hours) * 60.0 + minutes) * 60.0 + seconds) * 1_000.0;
-    (ms.is_finite() && ms >= 0.0).then_some(ms as i64)
+    (ms.is_finite() && ms >= 0.0).then_some(ms as u64)
 }
 
 /// Represents information about a Slurm job for the monitor.
