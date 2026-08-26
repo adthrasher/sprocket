@@ -308,8 +308,8 @@ exit $__sprocket_rc
 /// inactive file cache).
 fn parse_usage_file(contents: &str, containerized: bool) -> crankshaft::events::TaskResourceUsage {
     /// Converts clock ticks to milliseconds.
-    fn ticks_to_ms(ticks: u64) -> i64 {
-        (ticks * 1_000 / ASSUMED_CLOCK_TICKS_PER_SECOND) as i64
+    fn ticks_to_ms(ticks: u64) -> u64 {
+        ticks * 1_000 / ASSUMED_CLOCK_TICKS_PER_SECOND
     }
 
     let mut usage = crankshaft::events::TaskResourceUsage::default();
@@ -2464,6 +2464,7 @@ mod tests {
     use crate::config::CallCachingMode;
     use crate::config::Config;
     use crate::config::DockerBackendConfig;
+    use crate::config::LocalBackendConfig;
     use crate::digest::test::clear_digest_cache;
     use crate::eval::EvaluatedTask;
     use crate::v1::Evaluator;
