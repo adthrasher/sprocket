@@ -940,6 +940,60 @@ async fn run_metrics_groups_attempts_by_call(pool: sqlx::SqlitePool) {
     assert!(calls.iter().any(|c| c["call_id"] == "legacy-x1"));
 }
 
+/// Transfer totals recorded before a run fails must still be reported by the
+/// metrics endpoint: transfer accounting reflects data actually moved during
+/// localization/delocalization, independent of whether the run went on to
+/// succeed or fail.
+#[sqlx::test]
+async fn run_metrics_reports_transfer_totals_for_failed_run(pool: sqlx::SqlitePool) {
+    let (app, db, _temp) = create_test_server(pool).await;
+
+    let session_id = Uuid::new_v4();
+    db.create_session(session_id, SprocketCommand::Server, "tester")
+        .await
+        .unwrap();
+    let run_id = seed_run(&db, session_id, "failed-metrics-run").await;
+    db.start_run(run_id, Utc::now()).await.unwrap();
+    db.update_run_transfer_totals(run_id, r#"{"downloaded_bytes":2048,"uploaded_bytes":512}"#)
+        .await
+        .unwrap();
+
+    db.create_task(NewTask {
+        name: "wf-a-x1",
+        run_id,
+        status: TaskStatus::Initializing,
+        call_id: Some("wf-a"),
+        attempt: 0,
+    })
+    .await
+    .unwrap();
+    db.update_task_started("wf-a-x1", Utc::now()).await.unwrap();
+    db.update_task_completed("wf-a-x1", Some(1), Utc::now())
+        .await
+        .unwrap();
+
+    db.fail_run(run_id, "task `wf-a-x1` failed", Utc::now())
+        .await
+        .unwrap();
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(paths::run_metrics(run_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = response_json(response).await;
+
+    assert_eq!(json["run"]["status"], "failed");
+    assert_eq!(json["run"]["transfer"]["downloaded_bytes"], 2048);
+    assert_eq!(json["run"]["transfer"]["uploaded_bytes"], 512);
+}
+
 /// Metrics for an unknown run must return 404.
 #[sqlx::test]
 async fn run_metrics_for_unknown_run_returns_404(pool: sqlx::SqlitePool) {
