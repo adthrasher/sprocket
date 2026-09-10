@@ -68,7 +68,18 @@ pub type Result<T> = std::result::Result<T, DatabaseError>;
 
 /// The maximum number of attempts made by [`retry_on_lock`] before giving up
 /// and returning the last transient error.
-const MAX_LOCK_RETRIES: usize = 5;
+///
+/// Raised from an initial value of 5: real-world GPFS benchmarking (see
+/// `examples/gpfs_db_benchmark.rs` and `examples/fs_benchmark.rs`) showed
+/// isolated single-commit stalls up to ~20s even under otherwise-clean
+/// conditions, evidently caused by bursty, unrelated activity on the shared
+/// filesystem rather than anything sprocket's own locking pattern does (a
+/// dedicated `fcntl`-only probe found both uncontended and same-node
+/// contended lock acquisition fast and stable on the same mount). A 20s
+/// stall leaves little margin against a single 30s `busy_timeout` attempt,
+/// so this budget is widened instead of the timeout itself, giving more
+/// chances to ride out a stall of that magnitude before surfacing an error.
+const MAX_LOCK_RETRIES: usize = 10;
 
 /// Returns `true` if `error` represents a transient SQLite busy/locked
 /// condition (`SQLITE_BUSY` or `SQLITE_LOCKED`) that is worth retrying, as
@@ -102,13 +113,18 @@ fn is_transient_lock_error(error: &DatabaseError) -> bool {
 /// hot path where that outcome is unacceptable; it is not intended for
 /// read-mostly, user-initiated request handlers where surfacing the error
 /// immediately (for the caller to retry) is reasonable.
+///
+/// The backoff delay is capped at 10s (raised from an initial 5s, alongside
+/// [`MAX_LOCK_RETRIES`]) for the same reason: to give more total headroom
+/// against multi-second/multi-attempt stalls observed on the real target
+/// filesystem, without touching `busy_timeout` itself.
 pub async fn retry_on_lock<T, F, Fut>(operation: F) -> Result<T>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T>>,
 {
     let strategy = ExponentialBackoff::from_millis(500)
-        .max_delay(Duration::from_secs(5))
+        .max_delay(Duration::from_secs(10))
         .take(MAX_LOCK_RETRIES);
 
     let mut operation = operation;
