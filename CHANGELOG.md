@@ -167,6 +167,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `index` directory rather than the name of an output
   ([#704](https://github.com/stjude-rust-labs/sprocket/issues/704)).
 * `sprocket check --except` now accepts lint tag names (e.g., `--except documentation`).
+* Reduced SQLite commit volume and network-filesystem write cost for run
+  status transitions: `start_run`, `complete_run`, `fail_run`, and
+  `cancel_run` now each write in a single statement instead of two or three,
+  and completing a successful run now writes its outputs and completion
+  status together instead of as separate commits. The database's journal
+  mode changed from `DELETE` to `PERSIST` (SQLite's recommended mode for
+  network filesystems, avoiding repeated journal-file create/delete without
+  reintroducing the WAL-related `SQLITE_PROTOCOL` issues fixed in
+  [#734](https://github.com/stjude-rust-labs/sprocket/pull/734)), `mmap_size`
+  is now disabled by default (memory-mapped I/O is unsafe on some network
+  filesystems), and the connection pool now has an explicit, smaller
+  `max_connections` limit to reduce contention against the single-writer
+  lock ([#XX](https://github.com/stjude-rust-labs/sprocket/pull/XX)).
+* The task monitor now buffers task create/status/utilization/log writes and
+  flushes them in a single transaction — periodically, when the buffer
+  reaches a size cap, and always during shutdown — instead of committing
+  each write individually, further cutting commit volume for runs with many
+  concurrently-progressing tasks. Task state visible to readers (e.g. `sprocket
+  dev server inspect`, task log polling) may now lag up to one flush interval
+  behind the event it reflects
+  ([#XX](https://github.com/stjude-rust-labs/sprocket/pull/XX)).
+* Recording task resource utilization now merges the newly reported fields
+  into the existing value server-side (via SQLite's `json_patch`) instead of
+  a `SELECT`, Rust-side merge, and `UPDATE`, removing a read from the task
+  monitor's write path
+  ([#XX](https://github.com/stjude-rust-labs/sprocket/pull/XX)).
 
 ### Fixed
 
