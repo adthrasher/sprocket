@@ -55,6 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its `module.json`, pointing to `sprocket dev module lock`
   ([#999](https://github.com/stjude-rust-labs/sprocket/pull/999)).
 
+* The Docker backend can now sample task resource usage (peak/average memory
+  and CPU time) via the new `backends.<name>.resource_usage_interval`
+  configuration option ([#XX](https://github.com/stjude-rust-labs/sprocket/pull/XX)).
 * Execution metrics now include observed resource utilization. Backends whose
   scheduler reports utilization — currently LSF (via `bjobs`) and Slurm (via
   `sacct`) — record each attempt's peak and average resident memory and its

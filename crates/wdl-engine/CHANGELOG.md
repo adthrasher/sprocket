@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+#### Added
+
+* Added the `backends.<name>.resource_usage_interval` Docker configuration
+  option; when set, each task's peak and average memory and cumulative CPU
+  time are sampled from the Docker daemon at the given interval, in seconds,
+  and reported in the run's metrics ([#XX](https://github.com/stjude-rust-labs/sprocket/pull/XX)).
+
 #### Fixed
 
 * Call identifiers — and the task names minted from them — are now qualified
