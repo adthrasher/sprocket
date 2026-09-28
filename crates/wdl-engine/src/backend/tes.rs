@@ -86,6 +86,8 @@ pub struct TesBackend {
     inner: tes::Backend,
     /// The sender for engine events.
     events: Option<broadcast::Sender<EngineEvent>>,
+    /// The sender for Crankshaft events, passed to each task run.
+    crankshaft_events: Option<broadcast::Sender<crankshaft::events::Event>>,
     /// The evaluation cancellation context.
     cancellation: CancellationContext,
 }
@@ -138,7 +140,6 @@ impl TesBackend {
                 .interval(backend_config.interval.unwrap_or(DEFAULT_TES_INTERVAL))
                 .build(),
             names.clone(),
-            events.crankshaft().cloned(),
         )
         .await;
 
@@ -146,6 +147,7 @@ impl TesBackend {
             config,
             inner,
             events: events.engine().cloned(),
+            crankshaft_events: events.crankshaft().cloned(),
             cancellation,
         })
     }
@@ -458,7 +460,15 @@ impl TaskExecutionBackend for TesBackend {
                     .volumes(volumes.clone())
                     .build();
 
-                let results = match self.inner.run(task, self.cancellation.second())?.await {
+                let results = match self
+                    .inner
+                    .run(
+                        task,
+                        self.crankshaft_events.clone(),
+                        self.cancellation.second(),
+                    )?
+                    .await
+                {
                     Ok(results) => results,
                     Err(TaskRunError::Preempted) if preemptible > 0 => {
                         // Decrement the preemptible count and resubmit under a
