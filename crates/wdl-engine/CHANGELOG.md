@@ -23,10 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The TES backend reports internal preemption resubmissions through
   `TaskRetrying` and executes each under a derived `{name}~{n}` task name.
   Consumers should treat that suffix as a resubmission of the same logical
-  attempt. Backends that rename an execution report the final name to the
-  evaluator so any later retry links from the execution that actually failed;
-  for example, a failed TES resubmission links `base~1` to the next evaluator
-  attempt rather than linking `base` twice
+  attempt. Backends that rename an execution return an optional final
+  execution-name override. The evaluator uses that override so any later retry
+  links from the execution that actually failed; for example, a failed TES
+  resubmission links `base~1` to the next evaluator attempt rather than linking
+  `base` twice
   ([#1255](https://github.com/stjude-rust-labs/sprocket/pull/1255)).
 
 #### Fixed
